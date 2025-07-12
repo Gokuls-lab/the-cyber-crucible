@@ -6,10 +6,19 @@ import {
   SafeAreaView,
   TouchableOpacity,
 } from 'react-native';
+import { Dimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Target, Clock, ChevronLeft, BarChart } from 'lucide-react-native';
 import { supabase } from '@/lib/supabase';
+
+// Responsive utility functions
+const { width, height } = Dimensions.get('window');
+const guidelineBaseWidth = 375;
+const guidelineBaseHeight = 812;
+const hs = (size: number) => (width / guidelineBaseWidth) * size;
+const vs = (size: number) => (height / guidelineBaseHeight) * size;
+const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 export default function ResultsScreen() {
   const { session } = useLocalSearchParams<{ session: string }>();

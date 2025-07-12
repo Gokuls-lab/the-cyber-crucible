@@ -1,23 +1,36 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
+  Dimensions,
   SafeAreaView,
   ScrollView,
+  StyleSheet,
+  Text,
   TouchableOpacity,
+  View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { X, CircleCheck as CheckCircle, Clock, RotateCcw, Filter, ChevronDown, TrendingDown } from 'lucide-react-native';
-import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
-import Animated, { Easing, useSharedValue, useAnimatedStyle, withRepeat, withTiming } from 'react-native-reanimated';
-import Svg, { Circle } from 'react-native-svg';
-import { useExam } from '../contexts/ExamContext';
 
-const FILTER_OPTIONS = ['All', 'Incorrect Only', 'By Subject', 'By Difficulty', 'Recent'];
+// Responsive utility functions
+const { width, height } = Dimensions.get('window');
+const guidelineBaseWidth = 375;
+const guidelineBaseHeight = 812;
+const hs = (size: number) => (width / guidelineBaseWidth) * size;
+const vs = (size: number) => (height / guidelineBaseHeight) * size;
+const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
+
+import { useAuth } from '@/contexts/AuthContext';
+import { useExam } from '@/contexts/ExamContext';
+import { supabase } from '@/lib/supabase';
+import { LinearGradient } from 'expo-linear-gradient';
+import { CircleCheck as CheckCircle, ChevronDown, Filter, X } from 'lucide-react-native';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Circle } from 'react-native-svg';
+
+// const FILTER_OPTIONS = ['All', 'Incorrect Only', 'By Subject', 'By Difficulty', 'Recent'];
+const FILTER_OPTIONS = ['All', 'Incorrect answers', 'Correct answers','Recent'];
 
 export default function ReviewScreen() {
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { exam, subject } = useExam();
   const [selectedFilter, setSelectedFilter] = useState('All');
@@ -140,8 +153,10 @@ export default function ReviewScreen() {
 
   const getFilteredQuestions = () => {
     switch (selectedFilter) {
-      case 'Incorrect Only':
+      case 'Incorrect answers':
         return reviewedQuestions.filter(q => !q.isCorrect);
+      case 'Correct answers':
+        return reviewedQuestions.filter(q => q.isCorrect);
       case 'Recent':
         if (reviewedQuestions.length === 0) return [];
         const mostRecentDate = reviewedQuestions[0].date;
@@ -176,7 +191,7 @@ export default function ReviewScreen() {
 
   return (
     <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={{...styles.safeArea,paddingBottom:vs(60) + (insets.bottom || 10)}}>
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
           <View style={styles.header}>
             <Text style={styles.title}>Review Questions</Text>
@@ -186,7 +201,7 @@ export default function ReviewScreen() {
                 style={{ position: 'absolute', right: 0, top: 0, backgroundColor: '#F59E0B', padding: 8, borderRadius: 8 }}
                 onPress={fetchReviewedQuestions}
               >
-                <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>Reload</Text>
+                <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>Refresh</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -201,6 +216,8 @@ export default function ReviewScreen() {
               <Text style={[styles.statValue, { color: '#10B981' }]}>{stats.correct}</Text>
               <Text style={styles.statLabel}>Correct</Text>
             </View>
+            </View>
+            <View style={styles.statsContainer}>
             <View style={styles.statCard}>
               <Text style={[styles.statValue, { color: '#EF4444' }]}>{stats.incorrect}</Text>
               <Text style={styles.statLabel}>Incorrect</Text>
@@ -271,7 +288,7 @@ export default function ReviewScreen() {
                         )}
                       </View>
                       <Text style={styles.subjectText}>{question.subject}</Text>
-                      <Text style={styles.difficultyText}>{question.difficulty}</Text>
+                      {/* <Text style={styles.difficultyText}>{question.difficulty}</Text> */}
                     </View>
                     <Text style={styles.questionText} numberOfLines={2}>
                       {question.question}
@@ -313,7 +330,7 @@ export default function ReviewScreen() {
                       <Text style={styles.explanationLabel}>Explanation:</Text>
                       <Text style={styles.explanationText}>{question.explanation}</Text>
                     </View>
-
+{/* 
                     <View style={styles.actionButtons}>
                       <TouchableOpacity style={styles.actionButton}>
                         <RotateCcw size={16} color="#F59E0B" strokeWidth={2} />
@@ -324,7 +341,7 @@ export default function ReviewScreen() {
                         <TrendingDown size={16} color="#8B5CF6" strokeWidth={2} />
                         <Text style={styles.actionButtonText}>Similar Questions</Text>
                       </TouchableOpacity>
-                    </View>
+                    </View> */}
                   </View>
                 )}
               </View>

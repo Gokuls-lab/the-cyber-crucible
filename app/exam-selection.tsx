@@ -1,18 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
+  Dimensions,
   SafeAreaView,
   ScrollView,
-  TouchableOpacity,
+  StyleSheet,
+  Text,
   TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+
+// Responsive utility functions
+const { width, height } = Dimensions.get('window');
+const guidelineBaseWidth = 375;
+const guidelineBaseHeight = 812;
+const hs = (size: number) => (width / guidelineBaseWidth) * size;
+const vs = (size: number) => (height / guidelineBaseHeight) * size;
+const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
+
+import { useExam } from '@/contexts/ExamContext';
+import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { ArrowLeft, Search, ChevronRight } from 'lucide-react-native';
-import { supabase } from '@/lib/supabase';
-import { useExam } from './contexts/ExamContext';
+import { ArrowLeft, ChevronRight, Search } from 'lucide-react-native';
 
 export default function ExamSelectionScreen() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,7 +56,7 @@ export default function ExamSelectionScreen() {
           <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
             <ArrowLeft size={24} color="#F8FAFC" strokeWidth={2} />
           </TouchableOpacity>
-          <Text style={styles.title}>Choose Exam</Text>
+          <Text style={styles.title}>Choose Course</Text>
         </View>
 
         {/* Search */}

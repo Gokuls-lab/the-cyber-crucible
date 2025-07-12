@@ -1,5 +1,13 @@
 import { PropsWithChildren, useState } from 'react';
-import { StyleSheet, TouchableOpacity } from 'react-native';
+import { StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
+
+// Responsive utility functions
+const { width, height } = Dimensions.get('window');
+const guidelineBaseWidth = 375;
+const guidelineBaseHeight = 812;
+const hs = (size: number) => (width / guidelineBaseWidth) * size;
+const vs = (size: number) => (height / guidelineBaseHeight) * size;
+const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';

@@ -1,90 +1,91 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
+  Alert,
+  Dimensions,
   SafeAreaView,
   ScrollView,
+  StyleSheet,
+  Text,
+  ToastAndroid,
   TouchableOpacity,
+  View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { TrendingUp, Target, Clock, Award, ChartBar as BarChart, Calendar } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { useAuth } from '@/contexts/AuthContext';
+import { useExam } from '@/contexts/ExamContext';
 import { supabase } from '@/lib/supabase';
-import Animated, { Easing, useSharedValue, useAnimatedStyle, withRepeat, withTiming } from 'react-native-reanimated';
-import Svg, { Circle } from 'react-native-svg';
-import { useExam } from '../contexts/ExamContext';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import { ChartBar as BarChart, Calendar, Clock, RotateCw, Target, Trash2 } from 'lucide-react-native';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Svg, { Circle } from 'react-native-svg';
+
+// Responsive utility functions
+const { width, height } = Dimensions.get('window');
+const guidelineBaseWidth = 375;
+const guidelineBaseHeight = 812;
+const hs = (size: number) => (width / guidelineBaseWidth) * size;
+const vs = (size: number) => (height / guidelineBaseHeight) * size;
+const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 const SUBJECT_COLORS: Record<string, string> = {
-  'Network Security': '#10B981',
+  'SASE': '#10B981',
   'Penetration Testing': '#3B82F6',
-  'Vulnerability Assessment': '#8B5CF6',
-  'Risk Management': '#EF4444',
+  'Access Control Models': '#8B5CF6',
+  'Virtual TPM (vTPM)': '#EF4444',
   'Incident Response': '#F59E0B',
 };
 
 export default function StatsScreen() {
+  const insets = useSafeAreaInsets();
   const [achievements, setAchievements] = useState<any[]>([]);
   const { user } = useAuth();
-  const { exam, subject } = useExam();
+  const { exam, subject, loading: examLoading } = useExam();
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [initialLoaded, setInitialLoaded] = useState(false);
   const [subjects, setSubjects] = useState<any[]>([]);
   const router = useRouter();
-
-  useEffect(() => {
-    if (!exam) {
-      setSubjects([]);
-      return;
-    }
-
-    (async () => {
-      // 1. Fetch all subject_exams for the selected exam
-      const { data: subjectExams, error: subjectExamsError } = await supabase
-        .from('subject_exams')
-        .select('subject_id')
-        .eq('exam_id', exam.id);
-      if (subjectExamsError) {
-        setSubjects([]);
-        return;
-      }
-      // 2. Extract unique subject_ids
-      const subjectIds = [...new Set((subjectExams || []).map((se: any) => se.subject_id).filter(Boolean))];
-      if (subjectIds.length === 0) {
-        setSubjects([]);
-        return;
-      }
-      // 3. Fetch only those subjects
-      const { data: filteredSubjects, error: subjectsError } = await supabase
-        .from('subjects')
-        .select('*')
-        .in('id', subjectIds);
-      if (subjectsError) {
-        setSubjects([]);
-        return;
-      }
-      setSubjects(filteredSubjects || []);
-    })();
-  }, [exam]);
 
   const fetchStats = async () => {
     if (!user || !exam) return;
     setLoading(true);
     try {
+      // First fetch subjects
+      const { data: subjectExams, error: subjectExamsError } = await supabase
+        .from('subject_exams')
+        .select('subject_id')
+        .eq('exam_id', exam.id);
+
+      if (subjectExamsError) throw subjectExamsError;
+
+      const subjectIds = [...new Set((subjectExams || []).map((se: any) => se.subject_id).filter(Boolean))];
+
+      const { data: filteredSubjects, error: subjectsError } = await supabase
+        .from('subjects')
+        .select('*')
+        .in('id', subjectIds);
+
+      if (subjectsError) throw subjectsError;
+      setSubjects(filteredSubjects || []);
+
+      // Continue with existing stats fetch
       const { data: sessions, error: sessionError } = await supabase
         .from('quiz_sessions')
         .select('id, completed_at, time_taken_seconds')
         .eq('user_id', user.id)
         .order('completed_at', { ascending: false });
+
       if (sessionError) throw sessionError;
+
       let answersQuery = supabase
         .from('user_answers')
-        .select('id, is_correct, answered_at, question_id, questions:question_id (domain, subject_id)');
+        .select('id, is_correct, answered_at, question_id, quiz_session_id, questions:question_id (domain, subject_id)');
+
       if (subject) answersQuery = answersQuery.eq('questions.subject_id', subject.id);
       const { data: answers, error: answerError } = await answersQuery.order('answered_at', { ascending: false });
       if (answerError) throw answerError;
+
       const daysSet = new Set((sessions || []).map((s: any) => (s.completed_at || '').slice(0, 10)));
       const today = new Date();
       let streak = 0;
@@ -98,40 +99,55 @@ export default function StatsScreen() {
           break;
         }
       }
+
       const totalQuestions = answers.length;
       const correctAnswers = answers.filter((a: any) => a.is_correct).length;
       const accuracy = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
-      // Calculate quiz time (from sessions)
+
+      // Calculate total quiz time from sessions
       const quizTimeSeconds = (sessions || []).reduce((sum: number, s: any) => sum + (s.time_taken_seconds || 0), 0);
-      // Calculate review time (from user_answers)
+
+      // Calculate review time for non-quiz answers
       let reviewTimeSeconds = 0;
-      if (answers && answers.length > 0) {
-        // Group answers by quiz_session_id
-        const answersBySession: Record<string, any[]> = {};
-        for (const a of answers) {
-          const sid = a.quiz_session_id || 'no_session';
-          if (!answersBySession[sid]) answersBySession[sid] = [];
-          answersBySession[sid].push(a);
-        }
-        for (const sid in answersBySession) {
-          const sessionAnswers = answersBySession[sid];
-          if (sessionAnswers.length > 1) {
-            // Find earliest and latest answered_at
-            const timestamps = sessionAnswers.map(a => new Date(a.answered_at).getTime()).filter(Boolean);
-            if (timestamps.length > 1) {
-              const min = Math.min(...timestamps);
-              const max = Math.max(...timestamps);
-              // If review session is longer than quiz session, count the extra as review time
-              const session = (sessions || []).find((s: any) => s.id === sid);
-              const quizSessionTime = session ? (session.time_taken_seconds || 0) : 0;
-              const reviewSessionTime = Math.max(0, Math.floor((max - min) / 1000) - quizSessionTime);
-              reviewTimeSeconds += reviewSessionTime;
+      const nonQuizAnswers = answers.filter(a => !a.quiz_session_id);
+      
+      if (nonQuizAnswers.length > 0) {
+        const answersByDate: Record<string, any[]> = {};
+        nonQuizAnswers.forEach(a => {
+          const date = a.answered_at.split('T')[0];
+          if (!answersByDate[date]) answersByDate[date] = [];
+          answersByDate[date].push(a);
+        });
+
+        Object.values(answersByDate).forEach(dateAnswers => {
+          const sortedAnswers = dateAnswers.sort((a, b) => 
+            new Date(a.answered_at).getTime() - new Date(b.answered_at).getTime()
+          );
+
+          // Fixed: Using correct reference for previous answer
+          sortedAnswers.forEach((answer, index) => {
+            if (index === 0) return;
+            const timeDiff = (new Date(answer.answered_at).getTime() - 
+                            new Date(sortedAnswers[index - 1].answered_at).getTime()) / 1000;
+            
+            // Only count if answers are within 5 minutes of each other
+            if (timeDiff <= 300) {
+              reviewTimeSeconds += timeDiff;
             }
-          }
-        }
+          });
+        });
       }
-      const totalStudyTimeHours = Math.round(((quizTimeSeconds + reviewTimeSeconds) / 3600) * 10) / 10;
-      const studyTime = totalStudyTimeHours;
+
+      // Calculate total time and format appropriately
+      const totalSeconds = quizTimeSeconds + reviewTimeSeconds;
+      const totalMinutes = Math.round(totalSeconds / 60);
+      const totalHours = totalMinutes / 60;
+
+      // Format study time: show minutes if < 1 hour, otherwise show hours with 1 decimal
+      const studyTime = totalMinutes < 60 
+        ? `${totalMinutes}m`
+        : `${totalHours.toFixed(1)}h`;
+
       const weeklyProgress = Array(7).fill(0);
       for (let i = 0; i < 7; i++) {
         const d = new Date(today);
@@ -139,13 +155,14 @@ export default function StatsScreen() {
         const ds = d.toISOString().slice(0, 10);
         weeklyProgress[i] = answers.filter((a: any) => (a.answered_at || '').slice(0, 10) === ds).length;
       }
-      // Deduplicate answers: keep only the latest (by answered_at) per question_id
+
       const latestByQuestion: Record<string, any> = {};
       for (const a of answers) {
         if (!latestByQuestion[a.question_id] || new Date(a.answered_at).getTime() > new Date(latestByQuestion[a.question_id].answered_at).getTime()) {
           latestByQuestion[a.question_id] = a;
         }
       }
+
       const subjectMap: Record<string, { correct: number; total: number }> = {};
       for (const qid in latestByQuestion) {
         const a = latestByQuestion[qid];
@@ -157,11 +174,13 @@ export default function StatsScreen() {
         subjectMap[sid].total++;
         if (a.is_correct) subjectMap[sid].correct++;
       }
-      const subjectScores = (subjects.length > 0 ? subjects : []).map((s: any) => ({
+
+      const subjectScores = (filteredSubjects || []).map((s: any) => ({
         name: s.name,
         score: subjectMap[s.id] ? Math.round((subjectMap[s.id].correct / subjectMap[s.id].total) * 100) : 0,
         color: SUBJECT_COLORS[s.name] || '#3B82F6',
       }));
+
       setStats({
         streak,
         totalQuestions,
@@ -171,39 +190,96 @@ export default function StatsScreen() {
         weeklyProgress,
         subjectScores,
       });
+
     } catch (err) {
       setStats(null);
       alert('Failed to load stats.');
       console.error(err);
     } finally {
       setLoading(false);
-      setInitialLoaded(true);
     }
   };
 
+  const handleRefresh = () => {
+    fetchStats();
+  };
+
+  const handleReset = async () => {
+    Alert.alert(
+      "Reset All Data",
+      "Warning: This action will permanently delete all your study progress, including:\n\n• Quiz history and results\n• Performance statistics\n• Study time tracking\n• Achievement records\n\nThis action cannot be undone. Are you sure you want to continue?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            setLoading(true);
+            try {
+              
+              // Delete user answers
+              await supabase
+              .from('user_answers')
+              .delete()
+              .eq('user_id', user?.id);
+              
+              // Delete quiz sessions
+              await supabase
+                .from('quiz_sessions')
+                .delete()
+                .eq('user_id', user?.id);
+              // Reset stats
+              setStats(null);
+              setAchievements([]);
+              
+              ToastAndroid.show('All data has been reset successfully', ToastAndroid.SHORT);
+              
+              // Refresh stats to show empty state
+              fetchStats();
+            } catch (error) {
+              console.error(error);
+              Alert.alert('Error', 'Failed to reset data. Please try again.');
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   useEffect(() => {
-    if (!initialLoaded && user && exam) {
+    if (!examLoading && user && exam) {
       fetchStats();
     }
-  }, [user, exam, subject, initialLoaded]);
+  }, [user, exam, examLoading]);
 
-  // Re-fetch stats when subjects change and all dependencies are loaded
-  useEffect(() => {
-    if (initialLoaded && user && exam) {
-      fetchStats();
-    }
-  }, [subjects, initialLoaded, user, exam]);
-
-  if (!exam) {
+  if (examLoading) {
     return (
-      <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-        <SafeAreaView style={styles.safeArea}>
+      <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.safeArea}>
+        <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <Text style={{ color: '#F8FAFC', fontSize: 18, textAlign: 'center' }}>
+            <SpinnerAnimation />
+            <Text style={{ color: '#CBD5E1', fontSize: 18, marginTop: 16 }}>Loading Stats...</Text>
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
+
+  if (!user || !exam) {
+    return (
+      <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.safeArea}>
+        <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <Text style={{ color: '#F8FAFC', fontSize: 18, textAlign: 'center', marginBottom: 24 }}>
               Please select an exam to view your stats.
             </Text>
             <TouchableOpacity
-              style={{ marginTop: 24, backgroundColor: '#F59E0B', padding: 12, borderRadius: 8 }}
+              style={{ backgroundColor: '#F59E0B', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 }}
               onPress={() => router.push('/exam-selection')}
             >
               <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>Select Exam</Text>
@@ -216,21 +292,37 @@ export default function StatsScreen() {
 
   return (
     <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={{ ...styles.safeArea, paddingBottom: vs(60) + (insets.bottom || 10) }}>
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
           <View style={styles.header}>
-            <Text style={styles.title}>Your Statistics</Text>
-            <Text style={styles.subtitle}>Track your certification journey</Text>
-            {!loading && (
-              <View style={{ position: 'absolute', right: 0, top: 0 }}>
-                <TouchableOpacity
-                  style={{ backgroundColor: '#F59E0B', padding: 8, borderRadius: 8 }}
-                  onPress={fetchStats}
-                >
-                  <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>Reload</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+            <View>
+              <Text style={styles.title}>Your Statistics</Text>
+              <Text style={styles.subtitle}>Track your certification journey</Text>
+            </View>
+            <View style={styles.headerButtons}>
+              <TouchableOpacity 
+                onPress={handleReset}
+                style={[styles.iconButton, styles.resetButton]}
+                disabled={loading}
+              >
+                <Trash2 
+                  size={20} 
+                  color="#EF4444" 
+                  style={loading ? { opacity: 0.5 } : undefined}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity 
+                onPress={handleRefresh}
+                style={styles.iconButton}
+                disabled={loading}
+              >
+                <RotateCw 
+                  size={20} 
+                  color="#F8FAFC" 
+                  style={loading ? { opacity: 0.5 } : undefined}
+                />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {loading ? (
@@ -268,7 +360,7 @@ export default function StatsScreen() {
                   <View style={styles.metricIcon}>
                     <Clock size={24} color="#8B5CF6" strokeWidth={2} />
                   </View>
-                  <Text style={styles.metricValue}>{stats?.studyTime}h</Text>
+                  <Text style={styles.metricValue}>{stats?.studyTime}</Text>
                   <Text style={styles.metricLabel}>Study Time</Text>
                 </View>
               </View>
@@ -298,7 +390,9 @@ export default function StatsScreen() {
               </View>
 
               <View style={styles.chartCard}>
-                <Text style={styles.cardTitle}>Subject Performance</Text>
+                <View style={{ justifyContent: 'space-between', flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={styles.cardTitle}>Topic wise Performance</Text>
+                </View>
                 <View style={styles.subjectsContainer}>
                   {stats?.subjectScores?.map((subject: any, index: number) => (
                     <View key={index} style={styles.subjectRow}>
@@ -322,7 +416,7 @@ export default function StatsScreen() {
                 </View>
               </View>
 
-              <View style={styles.chartCard}>
+              {/* <View style={styles.chartCard}>
                 <Text style={styles.cardTitle}>Recent Achievements</Text>
                 <View style={styles.achievementsContainer}>
                   {achievements.length === 0 ? (
@@ -339,7 +433,7 @@ export default function StatsScreen() {
                     ))
                   )}
                 </View>
-              </View>
+              </View> */}
             </>
           )}
         </ScrollView>
@@ -364,6 +458,9 @@ const styles = StyleSheet.create({
   header: {
     marginTop: 20,
     marginBottom: 30,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
   },
   title: {
     fontSize: 28,
@@ -374,6 +471,24 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: '#CBD5E1',
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  iconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#334155',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  resetButton: {
+    backgroundColor: '#1E1E1E',
+    borderColor: '#EF4444',
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -461,7 +576,7 @@ const styles = StyleSheet.create({
   subjectName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: 'rgb(200,200,200)',
     marginBottom: 8,
   },
   progressBarContainer: {

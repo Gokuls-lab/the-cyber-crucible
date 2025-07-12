@@ -1,36 +1,47 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  Modal,
   SafeAreaView,
   ScrollView,
+  StyleSheet,
+  Text,
   TouchableOpacity,
-  Modal,
-  Alert,
-  ActivityIndicator,
+  View,
 } from 'react-native';
+
+// Responsive utility functions
+const { width, height } = Dimensions.get('window');
+const guidelineBaseWidth = 375;
+const guidelineBaseHeight = 812;
+const hs = (size: number) => (width / guidelineBaseWidth) * size;
+const vs = (size: number) => (height / guidelineBaseHeight) * size;
+const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
+
+import { useAuth } from '@/contexts/AuthContext';
+import { useExam } from '@/contexts/ExamContext';
+import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { useAuth } from '@/contexts/AuthContext';
-import { useExam } from '../contexts/ExamContext';
-import { Calendar, Clock, Target, TrendingUp, X, CircleCheck as CheckCircle, ChartBar as BarChart, CreditCard as Edit, Crown, ChevronLeft, ChevronRight } from 'lucide-react-native';
-import { supabase } from '@/lib/supabase';
-
+import { ChartBar as BarChart, Calendar, ChevronLeft, ChevronRight, Clock, Crown, CreditCard as Edit, Target, TrendingUp, X } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+const today = new Date();
 const QUIZ_MODES = [
   {
     id: 'daily',
     title: 'Question of the Day',
     icon: Calendar,
-    subtitle: 'Jun 7',
+    subtitle: today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     color: '#3B82F6',
     isPremium: false,
   },
   {
     id: 'quick_10',
-    title: 'Quick 10 Quiz',
+    title: 'Practice Quiz',
     icon: Target,
-    subtitle: '10 questions',
+    subtitle: 'Short quiz round',
     color: '#8B5CF6',
     isPremium: false,
   },
@@ -59,8 +70,8 @@ const QUIZ_MODES = [
     isPremium: true,
   },
   {
-    id: 'weakest',
-    title: 'Weakest Subject Quiz',
+    id: 'weakest_subject',
+    title: 'Weakest Domain Quiz',
     icon: BarChart,
     subtitle: 'Focus on gaps',
     color: '#F97316',
@@ -77,6 +88,12 @@ const QUIZ_MODES = [
 ];
 
 export default function StudyScreen() {
+// const temp_app=true;
+// if(temp_app){
+//   return(<Text>StudyScreen</Text>);
+// }
+    const insets = useSafeAreaInsets();
+    
   const { user } = useAuth();
   const { exam } = useExam();
   const [showDailyQuestion, setShowDailyQuestion] = useState(false);
@@ -126,13 +143,13 @@ export default function StudyScreen() {
         .eq('user_id', user.id)
         .gte('created_at', `${startDate}T00:00:00`)
         .lte('created_at', `${endDate}T23:59:59`);
-      console.log('Supabase quiz_sessions data:', data, 'error:', error);
+      // console.log('Supabase quiz_sessions data:', data, 'error:', error);
       if (!error && data) {
         // Extract unique days from created_at timestamps
         const daysSet = new Set<number>();
         data.forEach((row: any) => {
           const d = new Date(row.created_at);
-          console.log('Session row:', row.created_at, '->', d.getFullYear(), d.getMonth() + 1, d.getDate());
+          // console.log('Session row:', row.created_at, '->', d.getFullYear(), d.getMonth() + 1, d.getDate());
           if (
             d.getFullYear() === year &&
             d.getMonth() + 1 === month
@@ -141,7 +158,7 @@ export default function StudyScreen() {
           }
         });
         const studiedArr = Array.from(daysSet);
-        console.log('Fetched studied days:', studiedArr);
+        // console.log('Fetched studied days:', studiedArr);
         setStudiedDays(studiedArr);
       } else {
         setStudiedDays([]);
@@ -204,16 +221,16 @@ export default function StudyScreen() {
             .select('*')
             .eq('question_id', dq.question_id);
           if (oError || !options) throw oError || new Error('No options');
-          console.log(question, options);
+          // console.log(question, options);
           setDailyQuestion(question);
           setDailyOptions(options);
+          setShowDailyQuestion(true);
         } catch (err) {
-          Alert.alert('Error', 'Could not load daily question.');
+          Alert.alert('Error', 'No daily question available for today');
           setShowDailyQuestion(false);
         } finally {
           setLoadingDaily(false);
         }
-        setShowDailyQuestion(true);
       }else if(mode.id === 'level_up') {
         router.push('/quiz/levelup');
       }
@@ -287,32 +304,37 @@ export default function StudyScreen() {
 
   return (
     <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={{...styles.safeArea,paddingBottom:vs(60) + (insets.bottom || 10)}}>
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.greeting}>{getGreeting()}</Text>
-            <Text style={styles.examTitle}>
+            {/* <Text style={styles.examTitle}>
               {exam ? exam.title : 'No exam selected. Please choose an exam.'}
-            </Text>
-            {/* <View style={styles.examSelector}>
+            </Text> */}
+            {/* <Text style={styles.examTitle}>
+              {exam ? "CISSP" : 'No exam selected. Please choose an exam.'}
+            </Text> */}
+            <TouchableOpacity onPress={() => router.push('/exam-selection')}> 
+            <View style={styles.examSelector}>
               <Text style={styles.examText}>{exam ? exam.title : ''}</Text>
-            </View> */}
+            </View>
+            </TouchableOpacity>
           </View>
 
           {/* Study Calendar */}
           <View style={styles.calendarContainer}>
             {/* Month navigation */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 12 }}>
               <TouchableOpacity
                 onPress={() => setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
                 style={{ backgroundColor: '#1E293B', borderRadius: 20, padding: 8, borderWidth: 1, borderColor: '#334155', marginRight: 8 }}
                 accessibilityLabel="Previous Month"
               >
-                <ChevronLeft size={24} color="#F8FAFC" strokeWidth={2.5} />
+                <ChevronLeft size={20} color="#F8FAFC" strokeWidth={2.5} />
               </TouchableOpacity>
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#F8FAFC', fontSize: 20, fontWeight: 'bold', textAlign: 'center', letterSpacing: 0.5 }}>
+                <Text style={{ color: '#F8FAFC', fontSize: 18, fontWeight: 'bold', textAlign: 'center', letterSpacing: 0.5 }}>
                   {getMonthName(calendarMonth)}
                 </Text>
                 <TouchableOpacity
@@ -328,7 +350,7 @@ export default function StudyScreen() {
                 style={{ backgroundColor: '#1E293B', borderRadius: 20, padding: 8, borderWidth: 1, borderColor: '#334155', marginLeft: 8 }}
                 accessibilityLabel="Next Month"
               >
-                <ChevronRight size={24} color="#F8FAFC" strokeWidth={2.5} />
+                <ChevronRight size={20} color="#F8FAFC" strokeWidth={2.5} />
               </TouchableOpacity>
             </View>
             <View style={styles.calendarGrid}>
@@ -343,7 +365,7 @@ export default function StudyScreen() {
                   );
                 })();
                 const isStudied = studiedDays.includes(day);
-                console.log('Rendering day:', day, 'isStudied:', isStudied, 'studiedDays:', studiedDays);
+                // console.log('Rendering day:', day, 'isStudied:', isStudied, 'studiedDays:', studiedDays);
                 return (
                   <View
                     key={day}
@@ -380,7 +402,7 @@ export default function StudyScreen() {
           </View>
 
           {/* Premium Subscription Banner */}
-          <TouchableOpacity style={styles.premiumBanner}>
+          <TouchableOpacity onPress={() => router.push('/subscription')} style={styles.premiumBanner}>
             <LinearGradient
               colors={['#F59E0B', '#D97706']}
               style={styles.premiumGradient}
@@ -430,6 +452,7 @@ export default function StudyScreen() {
           transparent={true}
           onRequestClose={closeModal}
         >
+          <ScrollView>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -491,6 +514,7 @@ export default function StudyScreen() {
               )}
             </View>
           </View>
+          </ScrollView>
         </Modal>
       </SafeAreaView>
     </LinearGradient>
@@ -507,17 +531,22 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: 15,
   },
   header: {
-    marginTop: 20,
+    flexDirection:'column',
+    alignItems:'flex-start',
+    justifyContent:'space-between',
+    paddingRight:hs(20),
+    paddingLeft:hs(10),
+    marginTop: 40,
     marginBottom: 30,
   },
   greeting: {
     fontSize: 28,
     fontWeight: '800',
     color: '#F8FAFC',
-    marginBottom: 8,
+    marginBottom: 15,
   },
   examTitle: {
     fontSize: 18,
@@ -544,16 +573,22 @@ const styles = StyleSheet.create({
   },
   calendarContainer: {
     marginBottom: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    // paddingHorizontal: vs(10),
   },
   calendarGrid: {
+    marginTop: vs(20),
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
+    gap: vs(8),
+    marginLeft: hs(10),
+    marginBottom: vs(16),
   },
   calendarDay: {
-    width: 40,
-    height: 40,
+    width: vs(30),
+    height: vs(30),
     borderRadius: 8,
     backgroundColor: '#334155',
     justifyContent: 'center',
@@ -576,6 +611,10 @@ const styles = StyleSheet.create({
   calendarLegend: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent:'flex-start',
+    paddingHorizontal: vs(10),
+    marginTop:hs(10),
+    width:'100%'
   },
   legendItem: {
     flexDirection: 'row',

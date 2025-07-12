@@ -1,20 +1,46 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  TouchableOpacity,
-  Alert,
-  ScrollView,
-} from 'react-native';
+import { useAuth } from '@/contexts/AuthContext';
+import { useExam } from '@/contexts/ExamContext';
+import { updateProgress } from '@/lib/progress';
+import { supabase } from '@/lib/supabase';
+import { MaterialIcons as Icon } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Clock, Target, CheckCircle, X, RotateCcw } from 'lucide-react-native';
-import { useAuth } from '@/contexts/AuthContext';
-import { useExam } from '../contexts/ExamContext';
-import { supabase } from '@/lib/supabase';
-import { updateProgress } from '@/lib/progress';
+import { ArrowLeft, CheckCircle, Clock, RotateCcw, X } from 'lucide-react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+
+import {
+  Alert,
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
+import SectionedMultiSelect from 'react-native-sectioned-multi-select';
+
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+
+// Responsive utility functions
+const { width, height } = Dimensions.get('window');
+const guidelineBaseWidth = 375; // iPhone 11 Pro width
+const guidelineBaseHeight = 812; // iPhone 11 Pro height
+
+export const hs = (size: number) => (width / guidelineBaseWidth) * size;
+export const vs = (size: number) => (height / guidelineBaseHeight) * size;
+export const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
+
+interface Subject {
+  id: string;
+  name: string;
+  domain: string; // Added domain field for filtering
+}
 
 interface Question {
   id: string;
@@ -31,10 +57,33 @@ interface Question {
 }
 
 export default function QuizScreen() {
+  // Domain Dropdown
+  const [domainOpen, setDomainOpen] = useState(false);
+  const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
+  const [domainItems, setDomainItems] = useState<{label: string, value: string}[]>([]);
+  // Subject Dropdown
+  const [subjectOpen, setSubjectOpen] = useState(false);
+  const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
+  const [subjectItems, setSubjectItems] = useState<{label: string, value: string}[]>([]);
+
+
   const { mode } = useLocalSearchParams<{ mode: string }>();
   const { user } = useAuth();
   const { exam } = useExam();
-  
+
+  // Build your own quiz modal state
+  const [showBuildQuizModal, setShowBuildQuizModal] = useState(false);
+  const [buildQuizStarted, setBuildQuizStarted] = useState(false);
+  const [availableSubjects, setAvailableSubjects] = useState<Subject[]>([]);
+  const [subjectSearchText, setSubjectSearchText] = useState<string>('');
+  const [buildQuizNumQuestions, setBuildQuizNumQuestions] = useState<number>(10);
+  const [buildQuizTime, setBuildQuizTime] = useState<number>(600); // default 10 min
+  const [isTimedQuiz, setIsTimedQuiz] = useState<boolean>(true); // new: toggle for time limit
+  const [buildQuizDifficulty, setBuildQuizDifficulty] = useState<string[]>([]);
+  const [availableDomains, setAvailableDomains] = useState<string[]>([]);
+  const [domainSearchText, setDomainSearchText] = useState<string>('');
+
+  // ...existing states
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
@@ -44,17 +93,215 @@ export default function QuizScreen() {
   const [loading, setLoading] = useState(true);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [startTime] = useState(Date.now());
-  const [sessionId, setSessionId] = useState<string | null>(null);
+
+    // Update dropdown items when availableDomains/Subjects change
+    useEffect(() => {
+      setDomainItems(availableDomains.map(d => ({ label: d, value: d })));
+    }, [availableDomains]);
+    useEffect(() => {
+      setSubjectItems(availableSubjects.map(s => ({ label: s.name, value: s.id, domain: s.domain })));
+    }, [availableSubjects]);
+    // ...existing hooks
+  const insets = useSafeAreaInsets();
+
+  // Fetch available subjects for build your own quiz
+  // Re-fetch domains and subjects when modal opens or selectedDomains changes
+  useEffect(() => {
+    if (mode === 'custom') {
+      setShowBuildQuizModal(true);
+      setBuildQuizStarted(false);
+      setLoading(false);
+      // Fetch domains for the exam, then fetch subjects for selected domains
+      const fetchDomainsAndSubjects = async () => {
+        if (!exam) return;
+        // 1. Get subject IDs for this exam
+        const { data: subjectExams, error: subjectExamError } = await supabase
+          .from('subject_exams')
+          .select('subject_id')
+          .eq('exam_id', exam.id);
+        if (subjectExamError) return;
+        if (!subjectExams || subjectExams.length === 0) {
+          setAvailableDomains([]);
+          setAvailableSubjects([]);
+          return;
+        }
+        const subjectIds = subjectExams.map(se => se.subject_id);
+        // 2. Fetch all unique domains across all subjects for this exam
+        const { data: domainsData, error: domainsError } = await supabase
+          .from('questions')
+          .select('domain')
+          .in('subject_id', subjectIds);
+        if (domainsError || !domainsData) {
+          setAvailableDomains([]);
+          setAvailableSubjects([]);
+          return;
+        }
+        const uniqueDomains = Array.from(new Set(domainsData.map((q: { domain: string }) => q.domain)));
+        setAvailableDomains(uniqueDomains);
+
+        // 3. If domains are selected, fetch subjects that have at least one question in those domains
+        if (selectedDomains.length > 0) {
+          const { data: domainQuestions, error: dqErr } = await supabase
+            .from('questions')
+            .select('subject_id')
+            .in('domain', selectedDomains)
+            .in('subject_id', subjectIds);
+          if (dqErr || !domainQuestions) {
+            setAvailableSubjects([]);
+            return;
+          }
+          const domainSubjectIds = Array.from(new Set(domainQuestions.map((q: { subject_id: string }) => q.subject_id)));
+          if (domainSubjectIds.length === 0) {
+            setAvailableSubjects([]);
+            return;
+          }
+          // 4. Get subject details for those IDs
+          const { data: subjects, error: subjectsError } = await supabase
+            .from('subjects')
+            .select('id, name, domain')
+            .in('id', domainSubjectIds);
+          if (subjectsError) {
+            setAvailableSubjects([]);
+            return;
+          }
+          setAvailableSubjects(subjects || []);
+        } else {
+          setAvailableSubjects([]);
+        }
+      };
+      fetchDomainsAndSubjects();
+    }
+  }, [mode, exam, selectedDomains]);
+
+  // Handler for starting custom quiz
+  const handleStartBuildQuiz = async () => {
+    setShowBuildQuizModal(false);
+    setLoading(true);
+    setBuildQuizStarted(true);
+  
+    try {
+      let query = supabase
+        .from('questions')
+        .select(`
+          id,
+          question_text,
+          explanation,
+          difficulty,
+          domain,
+          subject_id,
+          question_options(*)
+        `); // Restored question_options join
+  
+        console.log('selectedSubjects', selectedSubjects);
+        console.log('buildQuizDifficulty', buildQuizDifficulty);
+        console.log('selectedDomains', selectedDomains);
+        
+
+        if (buildQuizDifficulty && buildQuizDifficulty.length > 0) {
+          query = query.in('difficulty', buildQuizDifficulty);
+        }
+        if (selectedDomains && selectedDomains.length > 0) {
+          query = query.in('domain', selectedDomains);
+        }
+  
+      // Fetch a reasonable upper bound of questions (e.g., 1000)
+      query = query.limit(50);
+
+      const { data, error } = await query;
+      console.log('Supabase error:', error);
+      console.log('Supabase data:', data);
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        Alert.alert('No questions found for your filters.');
+        setQuestions([]);
+        setTimeLeft(isTimedQuiz ? buildQuizTime : null); // use null for no timer
+        setLoading(false);
+        return;
+      }
+      // Shuffle and pick N questions in JS
+      function shuffle(array: any[]) {
+        for (let i = array.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [array[i], array[j]] = [array[j], array[i]];
+        }
+        return array;
+      }
+      const mappedQuestions = (data as any[]).map(q => ({
+        ...q,
+        options: q.question_options || [],
+      }));
+      const shuffled = shuffle(mappedQuestions);
+      const selected = shuffled.slice(0, buildQuizNumQuestions);
+      setQuestions(selected as Question[]);
+      setTimeLeft(isTimedQuiz ? buildQuizTime : null); // use null for no timer
+    } catch (err) {
+      Alert.alert('Error', 'Could not fetch questions for your quiz.');
+    }
+    setLoading(false);
+  };
 
   const fetchQuestions = useCallback(async () => {
+    if (mode === 'custom') return; // handled in build quiz modal
     if (!exam) return;
     setLoading(true);
     try {
       let questionCount = 10; // Default for quick_10
       if (mode === 'timed') {
         questionCount = 20;
-        // setTimeLeft(30 * 60); // 30 minutes
-        setTimeLeft(10);
+        setTimeLeft(45*questionCount);
+      }
+
+      if (mode === 'weakest_subject') {
+        if (!user || !user.id) throw new Error('User not found');
+        const sessions = await supabase
+          .from('quiz_sessions')
+          .select('id')
+          .eq('user_id', user.id);
+        console.log('sessions: ', sessions);
+        if (!sessions.data || sessions.data.length === 0) {
+          Alert.alert('No Weakest Subject', 'Could not determine your weakest subject. Have you answered any questions yet?');
+          router.back();
+          return;
+        }
+        const { data: weakestSubject, error: weakestSubjectError } = await supabase
+          .rpc('get_weakest_subject', { user_id_param: user.id, exam_id_param: exam.id });
+
+        if (weakestSubjectError) throw weakestSubjectError;
+        if (!weakestSubject || weakestSubject.length === 0) {
+          Alert.alert('No Weakest Subject', 'Could not determine your weakest subject. Have you answered any questions yet?');
+          router.back();
+          return;
+        }
+
+        const subjectId = weakestSubject[0].subject_id;
+
+        const { data, error } = await supabase
+          .from('questions')
+          .select(`
+            id,
+            question_text,
+            explanation,
+            difficulty,
+            domain,
+            question_options (
+              id,
+              option_text,
+              option_letter,
+              is_correct
+            )
+          `)
+          .eq('subject_id', subjectId)
+          .limit(100);
+
+        if (error) throw error;
+        setQuestions(
+          (data as any[]).map(q => ({
+            ...q,
+            options: q.question_options || [],
+          })) as Question[]
+        );
+        setLoading(false);
+        return;
       }
 
       if (mode === 'missed') {
@@ -159,6 +406,25 @@ export default function QuizScreen() {
       const subjectIds = subjectExams.map(se => se.subject_id);
 
       // Now, fetch questions for all those subjects
+      // const { data, error } = await supabase
+      //   .from('questions')
+      //   .select(`
+      //     id,
+      //     question_text,
+      //     explanation,
+      //     difficulty,
+      //     domain,
+      //     question_options (
+      //       id,
+      //       option_text,
+      //       option_letter,
+      //       is_correct
+      //     )
+      //   `)
+      //   .in('subject_id', subjectIds)
+      //   .limit(questionCount);
+      // if (error) throw error;
+
       const { data, error } = await supabase
         .from('questions')
         .select(`
@@ -176,9 +442,13 @@ export default function QuizScreen() {
         `)
         .in('subject_id', subjectIds)
         .limit(questionCount);
+
       if (error) throw error;
 
-      const formattedQuestions = data.map((q: any) => ({
+      // Shuffle the data manually
+      const shuffled = data.sort(() => Math.random() - 0.5).slice(0, questionCount);
+
+      const formattedQuestions = shuffled.map((q: any) => ({
         id: q.id,
         question_text: q.question_text,
         explanation: q.explanation,
@@ -197,36 +467,12 @@ export default function QuizScreen() {
     } finally {
       setLoading(false);
     }
-  }, [mode]);
+  }, [mode, user, exam]);
 
-  // Create quiz session at quiz start
+  // Fetch questions on component mount
   useEffect(() => {
-    const createSessionAndFetchQuestions = async () => {
-      if (!user || !mode) return;
-      try {
-        const { data, error } = await supabase
-          .from('quiz_sessions')
-          .insert([
-            {
-              user_id: user.id,
-              quiz_type: mode,
-              created_at: new Date().toISOString(),
-            },
-          ])
-          .select()
-          .single();
-        if (error) throw error;
-        setSessionId(data.id);
-        await fetchQuestions();
-      } catch (err) {
-        console.error('Error creating quiz session:', err);
-        Alert.alert('Error', 'Could not start quiz session.');
-        router.back();
-      }
-    };
-    createSessionAndFetchQuestions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, mode, exam]);
+    fetchQuestions();
+  }, [fetchQuestions]);
 
   // Timer effect for timed quizzes
   useEffect(() => {
@@ -272,8 +518,15 @@ export default function QuizScreen() {
   };
 
   const handleQuizComplete = async () => {
-    if (quizCompleted || !sessionId) return;
+    if (quizCompleted || !user) {
+      if (!user) {
+        Alert.alert("Not Logged In", "You must be logged in to save quiz results.");
+        router.back();
+      }
+      return;
+    }
     setQuizCompleted(true);
+
     try {
       // Calculate score
       let correctAnswers = 0;
@@ -291,37 +544,58 @@ export default function QuizScreen() {
         });
       }
       const timeTaken = Math.floor((Date.now() - startTime) / 1000);
-      // Update quiz session
-      const { error: sessionError } = await supabase
+
+      // Create quiz session
+      const quizTypeMap: Record<string, string> = {
+        weakest_subject: 'weakest',
+        quick_10: 'quick_10',
+        timed: 'timed',
+        level_up: 'level_up',
+        missed: 'missed',
+        custom: 'custom',
+        daily: 'daily',
+        weakest: 'weakest',
+      };
+      const quizType = quizTypeMap[mode] || mode;
+
+      const { data: sessionData, error: sessionError } = await supabase
         .from('quiz_sessions')
-        .update({
+        .insert({
+          user_id: user.id,
+          quiz_type: quizType,
           score: correctAnswers,
           total_questions: questions.length,
           time_taken_seconds: timeTaken,
           completed_at: new Date().toISOString(),
         })
-        .eq('id', sessionId);
+        .select('id')
+        .single();
+
       if (sessionError) throw sessionError;
+      if (!sessionData) throw new Error("Failed to create session and get ID.");
+
+      const newSessionId = sessionData.id;
+
       // Save individual answers
       const answersToInsert = sessionAnswers.map(answer => ({
         ...answer,
-        user_id: user?.id,
-        quiz_session_id: sessionId,
+        user_id: user.id,
+        quiz_session_id: newSessionId,
       }));
       const { error: answersError } = await supabase
         .from('user_answers')
         .insert(answersToInsert);
       if (answersError) throw answersError;
+
       // Update user progress
-      if (user) {
-        await updateProgress(user.id, {
-          questionsAnswered: questions.length,
-          correctAnswers,
-          timeTaken,
-        });
-      }
+      await updateProgress(user.id, {
+        questionsAnswered: questions.length,
+        correctAnswers,
+        timeTaken,
+      });
+
       // Navigate to results
-      router.replace(`/results?session=${sessionId}`);
+      router.replace(`/results?session=${newSessionId}`);
     } catch (err) {
       console.error('Error completing quiz:', err);
       Alert.alert('Error', 'Failed to save quiz results');
@@ -337,15 +611,159 @@ export default function QuizScreen() {
 
   const getQuizTitle = () => {
     switch (mode) {
-      case 'quick_10': return 'Quick 10 Quiz';
+      case 'quick_10': return 'Practice Quiz';
       case 'timed': return 'Timed Quiz';
       case 'level_up': return 'Level Up Quiz';
       case 'missed': return 'Missed Questions';
-      case 'weakest': return 'Weakest Subject';
+      case 'weakest_subject': return 'Weakest Subject';
       case 'custom': return 'Custom Quiz';
       default: return 'Quiz';
     }
   };
+
+  // --- Custom Quiz Modal ---
+  if (mode === 'custom' && showBuildQuizModal && !buildQuizStarted) {
+    return (
+      <LinearGradient colors={['#0F172A', '#1E293B']} style={[styles.container, {justifyContent:'center',alignItems:'center'}]}>
+        <SafeAreaView style={[styles.safeArea, {justifyContent:'center',alignItems:'center',paddingTop:vs(10), width: '100%',paddingBottom: insets.bottom + vs(2),}]}>
+          <KeyboardAvoidingView
+        style={{ flex: 1, width: '100%' }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
+      >
+        <ScrollView
+          style={styles.centeredModalWrapper}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center' }}
+        >
+            <Text style={styles.modalTitleStrong}>Build Your Own Quiz</Text>
+            <View style={styles.modalContainerCompact}>
+
+            {/* Domain Selection - Multi-Select Dropdown */}
+            <Text style={styles.modalLabel}>Select Domains</Text>
+            <SectionedMultiSelect
+              items={availableDomains.map(domain => ({ id: domain, name: domain }))}
+              IconRenderer={(props: any) => <Icon {...props} /> as any}
+              uniqueKey="id"
+              onSelectedItemsChange={setSelectedDomains}
+              selectedItems={selectedDomains}
+              selectText="Choose domains..."
+              searchPlaceholderText="Search domains..."
+              confirmText="Confirm"
+              colors={{ primary: '#F59E0B', success: '#10B981', text: '#F8FAFC', chipColor: '#F59E0B', selectToggleTextColor: '#F8FAFC', searchPlaceholderTextColor: '#94A3B8' }}
+              styles={{
+                selectToggle: { backgroundColor: '#334155', borderColor: '#F59E0B', marginBottom: vs(10), borderRadius: 8, padding: 12 },
+                chipsWrapper: { backgroundColor: '#1E293B', padding: 15, borderRadius: 8, },
+                itemText: { color: 'black' },
+                selectedItemText: { color: '#F59E0B', fontWeight: 'bold' },
+              }}
+              disabled={availableDomains.length === 0}
+            />
+
+
+
+            {/* Difficulty Selection */}
+            <Text style={styles.modalLabel}>Select Difficulty (optional)</Text>
+            <View style={styles.optionRow}>
+              {['easy', 'medium', 'hard'].map((diff) => (
+                <TouchableOpacity
+                  key={diff}
+                  style={[
+                    styles.optionButton,
+                    (Array.isArray(buildQuizDifficulty) ? buildQuizDifficulty.includes(diff) : buildQuizDifficulty === diff) && styles.optionButtonSelected,
+                  ]}
+                  onPress={() => {
+                    setBuildQuizDifficulty((prev) => {
+                      if (!Array.isArray(prev)) return [diff];
+                      return prev.includes(diff)
+                        ? prev.filter((d) => d !== diff)
+                        : [...prev, diff];
+                    });
+                  }}
+                >
+                  <Text style={styles.optionButtonText}>{diff.charAt(0).toUpperCase() + diff.slice(1)}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Number of Questions - free input */}
+            <Text style={styles.modalLabel}>Number of Questions (MAX 50)</Text>
+            <View style={styles.inputRow}>
+              <Text style={styles.inputLabel}>Questions:</Text>
+              <TextInput
+                style={styles.inputBox}
+                keyboardType="numeric"
+                value={buildQuizNumQuestions.toString()}
+                onChangeText={(val) => {
+                  const v = parseInt(val.replace(/[^0-9]/g, ''), 10);
+                  if (!isNaN(v)) {
+                    if (v <= 50) {
+                      setBuildQuizNumQuestions(v);
+                    } else {
+                      setBuildQuizNumQuestions(50);
+                    }
+                  } else {
+                    setBuildQuizNumQuestions(0);
+                  }
+                }}
+                placeholder="e.g. 10"
+                maxLength={3}
+              />
+            </View>
+
+
+            {/* Time Limit Toggle */}
+            <View style={{ flexDirection: 'row', alignItems: 'stretch', marginBottom: 12 }}>
+              <Text style={styles.modalLabel}>Enable Time Limit (minutes)</Text>
+              <Switch
+                style={{ marginLeft: 12 }}
+                value={isTimedQuiz}
+                onValueChange={setIsTimedQuiz}
+                trackColor={{ false: '#64748B', true: '#10B981' }}
+                thumbColor={isTimedQuiz ? '#F8FAFC' : '#CBD5E1'}
+                accessibilityLabel="Enable Time Limit"
+              />
+            </View>
+            {/* Time Limit - free input (only show if timed) */}
+            {isTimedQuiz && (
+              <>
+                {/* <Text style={styles.modalLabel}>Time Limit (minutes)</Text> */}
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputLabel}>Minutes:</Text>
+                  <TextInput
+                    style={styles.inputBox}
+                    keyboardType="numeric"
+                    value={Math.floor(buildQuizTime / 60).toString()}
+                    onChangeText={(val) => {
+                      const v = parseInt(val.replace(/[^0-9]/g, ''), 10);
+                      setBuildQuizTime(isNaN(v) ? 0 * 60 : v * 60);
+                    }}
+                    placeholder="e.g. 10"
+                    maxLength={5}
+                  />
+                </View>
+              </>
+            )}
+
+
+            {/* Start Quiz Button */}
+            <TouchableOpacity
+              style={[
+                styles.actionButton,
+                (selectedDomains.length === 0) && styles.actionButtonDisabled,
+              ]}
+              onPress={handleStartBuildQuiz}
+              disabled={selectedDomains.length === 0}
+            >
+              <Text style={styles.actionButtonText}>Start Quiz</Text>
+            </TouchableOpacity>
+          </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+      </LinearGradient>
+    );
+  }
 
   if (loading) {
     return (
@@ -415,10 +833,10 @@ export default function QuizScreen() {
           {/* Question */}
           <View style={styles.questionContainer}>
             <View style={styles.questionHeader}>
-              <View style={styles.questionMeta}>
+              {/* <View style={styles.questionMeta}>
                 <Text style={styles.difficultyText}>{currentQuestion.difficulty}</Text>
                 <Text style={styles.domainText}>{currentQuestion.domain}</Text>
-              </View>
+              </View> */}
             </View>
             <Text style={styles.questionText}>{currentQuestion.question_text}</Text>
           </View>
@@ -461,7 +879,7 @@ export default function QuizScreen() {
         </ScrollView>
 
         {/* Action Button */}
-        <View style={styles.actionContainer}>
+        <View style={[styles.actionContainer, { paddingBottom: insets.bottom || vs(30) }]}>
           {!showResult ? (
             <TouchableOpacity
               style={[styles.actionButton, !selectedAnswer && styles.actionButtonDisabled]}
@@ -484,12 +902,187 @@ export default function QuizScreen() {
 }
 
 const styles = StyleSheet.create({
+  centeredModalWrapper: {
+    width: '96%',
+    maxWidth: 420,
+    alignSelf: 'center',
+    // backgroundColor: 'rgba(30,41,59,0.98)',
+    padding: hs(16),
+    marginTop: vs(36),
+    marginBottom: vs(10),
+  },
+  modalContainerCompact: {
+    width: '100%',
+    alignSelf: 'center',
+    borderRadius: ms(14),
+    gap: hs(10),
+    paddingVertical: vs(8),
+    paddingHorizontal: hs(2),
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    paddingBottom: vs(16),
+
+  },
+  modalTitleStrong: {
+    fontSize: ms(20),
+    fontWeight: 'bold',
+    color: '#F8FAFC',
+    marginBottom: vs(16),
+    textAlign: 'center',
+  },
+  // --- Custom Modal Styles ---
+  modalContentContainer: {
+    alignItems: 'stretch',
+    justifyContent: 'center',
+  },
+  subjectSearchBox: {
+    backgroundColor: '#1E293B',
+    color: '#F8FAFC',
+    borderRadius: ms(8),
+    paddingVertical: vs(6),
+    paddingHorizontal: hs(12),
+    fontSize: ms(15),
+    marginBottom: vs(8),
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  subjectListItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: vs(8),
+    paddingHorizontal: hs(12),
+    borderRadius: ms(8),
+    marginBottom: vs(4),
+    backgroundColor: '#334155',
+  },
+  subjectListItemSelected: {
+    backgroundColor: '#0EA5E9',
+  },
+  subjectListItemText: {
+    color: '#F8FAFC',
+    fontSize: ms(15),
+    flex: 1,
+  },
+  subjectListItemCheck: {
+    color: '#22D3EE',
+    fontWeight: 'bold',
+    fontSize: ms(16),
+    marginLeft: hs(8),
+  },
+  selectedCountText: {
+    color: '#38BDF8',
+    fontSize: ms(13),
+    marginTop: vs(4),
+    textAlign: 'right',
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: hs(8),
+    marginBottom: vs(10),
+  },
+  inputLabel: {
+    color: '#F8FAFC',
+    fontWeight: '600',
+    fontSize: ms(14),
+    marginRight: hs(8),
+  },
+  inputBox: {
+    backgroundColor: '#334155',
+    color: '#F8FAFC',
+    borderRadius: ms(8),
+    paddingVertical: vs(6),
+    paddingHorizontal: hs(12),
+    fontSize: ms(15),
+    minWidth: hs(60),
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  modalContainer: {
+    flex:1,
+    padding: hs(20),
+    // backgroundColor: '#1E293B',
+    borderRadius: ms(16),
+    gap:hs(15),
+    // shadowColor: '#000',
+    // shadowOffset: { width: 0, height: 2 },
+    // shadowOpacity: 0.2,
+    // shadowRadius: 4,
+    // elevation: 5,
+    // paddingBottom: vs(36),
+    alignItems: 'stretch',
+    justifyContent: 'center',
+  },
+  modalTitle: {
+    color: '#F8FAFC',
+    fontSize: ms(22),
+    fontWeight: '700',
+    marginBottom: vs(16),
+    textAlign: 'center',
+  },
+  modalLabel: {
+    color: '#F59E0B',
+    fontSize: ms(15),
+    fontWeight: '600',
+    marginTop: vs(12),
+    marginBottom: vs(6),
+  },
+  subjectList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: hs(8),
+    marginBottom: vs(10),
+  },
+  subjectButton: {
+    backgroundColor: '#334155',
+    borderRadius: ms(8),
+    paddingVertical: vs(6),
+    paddingHorizontal: hs(14),
+    marginRight: hs(8),
+    marginBottom: vs(8),
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  subjectButtonSelected: {
+    backgroundColor: '#F59E0B',
+    borderColor: '#F59E0B',
+  },
+  subjectButtonText: {
+    color: '#F8FAFC',
+    fontWeight: '600',
+  },
+  optionRow: {
+    flexDirection: 'row',
+    gap: hs(12),
+    marginBottom: vs(10),
+  },
+  optionButton: {
+    backgroundColor: '#334155',
+    borderRadius: ms(8),
+    paddingVertical: vs(6),
+    paddingHorizontal: hs(16),
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  optionButtonSelected: {
+    backgroundColor: '#F59E0B',
+    borderColor: '#F59E0B',
+  },
+  optionButtonText: {
+    color: '#F8FAFC',
+    fontWeight: '600',
+    fontSize: ms(15),
+  },
+// Use responsive units for all values below
+
   container: {
     flex: 1,
   },
   safeArea: {
     flex: 1,
-    paddingTop: 30,
+    paddingTop: vs(30),
+
   },
   loadingContainer: {
     flex: 1,
@@ -497,27 +1090,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    fontSize: 16,
+    fontSize: ms(16),
     color: '#F8FAFC',
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: hs(20),
   },
   emptyText: {
-    fontSize: 18,
+    fontSize: ms(18),
     color: '#94A3B8',
-    marginBottom: 20,
+    marginBottom: vs(20),
   },
   retryButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#334155',
-    padding: 12,
-    borderRadius: 8,
-    gap: 8,
+    padding: hs(12),
+    borderRadius: ms(8),
+    gap: hs(8),
   },
   retryText: {
     color: '#F8FAFC',
@@ -526,17 +1119,17 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
+    paddingHorizontal: hs(20),
+    paddingVertical: vs(16),
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#334155',
   },
   backButton: {
-    marginRight: 16,
+    marginRight: hs(16),
   },
   title: {
     flex: 1,
-    fontSize: 20,
+    fontSize: ms(20),
     fontWeight: '700',
     color: '#F8FAFC',
   },
@@ -544,81 +1137,81 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1E293B',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    gap: 6,
+    paddingHorizontal: hs(12),
+    paddingVertical: vs(6),
+    borderRadius: ms(8),
+    gap: hs(6),
   },
   timerText: {
-    fontSize: 14,
+    fontSize: ms(14),
     fontWeight: '600',
     color: '#F59E0B',
   },
   progressContainer: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: hs(20),
+    paddingVertical: vs(16),
   },
   progressBar: {
-    height: 4,
+    height: vs(4),
     backgroundColor: '#334155',
-    borderRadius: 2,
-    marginBottom: 8,
+    borderRadius: ms(2),
+    marginBottom: vs(8),
   },
   progressFill: {
     height: '100%',
     backgroundColor: '#F59E0B',
-    borderRadius: 2,
+    borderRadius: ms(2),
   },
   progressText: {
-    fontSize: 14,
+    fontSize: ms(14),
     color: '#94A3B8',
     textAlign: 'center',
   },
   scrollView: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: hs(20),
   },
   questionContainer: {
-    marginBottom: 24,
+    marginBottom: vs(24),
   },
   questionHeader: {
-    marginBottom: 16,
+    marginBottom: vs(16),
   },
   questionMeta: {
     flexDirection: 'row',
-    gap: 12,
+    gap: hs(12),
   },
   difficultyText: {
-    fontSize: 12,
+    fontSize: ms(12),
     fontWeight: '600',
     color: '#F59E0B',
     backgroundColor: '#1E293B',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: hs(8),
+    paddingVertical: vs(4),
+    borderRadius: ms(6),
   },
   domainText: {
-    fontSize: 12,
+    fontSize: ms(12),
     color: '#94A3B8',
     backgroundColor: '#334155',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: hs(8),
+    paddingVertical: vs(4),
+    borderRadius: ms(6),
   },
   questionText: {
-    fontSize: 18,
+    fontSize: ms(18),
     color: '#F8FAFC',
-    lineHeight: 26,
+    lineHeight: ms(26),
   },
   optionsContainer: {
-    gap: 12,
-    marginBottom: 24,
+    gap: hs(12),
+    marginBottom: vs(24),
   },
   optionButton: {
     backgroundColor: '#334155',
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
+    borderRadius: ms(12),
+    padding: hs(16),
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#475569',
     flexDirection: 'row',
     alignItems: 'center',
@@ -642,50 +1235,51 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   optionLetter: {
-    fontSize: 16,
+    fontSize: ms(16),
     fontWeight: '700',
     color: '#F59E0B',
-    marginRight: 12,
-    minWidth: 20,
+    marginRight: hs(12),
+    minWidth: hs(20),
   },
   optionText: {
-    fontSize: 16,
+    fontSize: ms(16),
     color: '#F8FAFC',
     flex: 1,
   },
   explanationContainer: {
     backgroundColor: '#1E293B',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
+    borderRadius: ms(12),
+    padding: hs(16),
+    marginBottom: vs(24),
   },
   explanationTitle: {
-    fontSize: 16,
+    fontSize: ms(16),
     fontWeight: '700',
     color: '#F8FAFC',
-    marginBottom: 8,
+    marginBottom: vs(8),
   },
   explanationText: {
-    fontSize: 14,
+    fontSize: ms(14),
     color: '#CBD5E1',
-    lineHeight: 20,
+    lineHeight: ms(20),
   },
   actionContainer: {
-    padding: 20,
-    borderTopWidth: 1,
+    padding: hs(20),
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#334155',
   },
   actionButton: {
     backgroundColor: '#F59E0B',
-    padding: 16,
-    borderRadius: 12,
+    padding: hs(16),
+    borderRadius: ms(12),
     alignItems: 'center',
+    marginBottom:hs(10)
   },
   actionButtonDisabled: {
     opacity: 0.5,
   },
   actionButtonText: {
-    fontSize: 16,
+    fontSize: ms(16),
     fontWeight: '600',
     color: '#0F172A',
   },

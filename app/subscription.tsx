@@ -7,11 +7,20 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { ArrowLeft, Check, Crown } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
+
+// Responsive utility functions
+const { width, height } = Dimensions.get('window');
+const guidelineBaseWidth = 375;
+const guidelineBaseHeight = 812;
+const hs = (size: number) => (width / guidelineBaseWidth) * size;
+const vs = (size: number) => (height / guidelineBaseHeight) * size;
+const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 const SUBSCRIPTION_FEATURES = [
   'Access to all quiz modes',

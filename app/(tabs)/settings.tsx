@@ -1,24 +1,102 @@
 import React from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
+  Alert,
+  Dimensions,
+  Linking,
   SafeAreaView,
   ScrollView,
-  TouchableOpacity,
+  StyleSheet,
   Switch,
-  Alert,
+  Text,
+  ToastAndroid,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+
 import { useAuth } from '@/contexts/AuthContext';
-import { User, Crown, Bell, Shield, CircleHelp as HelpCircle, LogOut, ChevronRight, Mail, Calendar, Volume2 } from 'lucide-react-native';
+import { supabase } from '@/lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Notifications from 'expo-notifications';
+import { router } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
+import { Bell, Calendar, ChevronRight, Crown, CircleHelp as HelpCircle, LogOut, Mail, Shield, Trash2, User } from 'lucide-react-native';
+
+// Responsive utility functions
+const { width, height } = Dimensions.get('window');
+const guidelineBaseWidth = 375;
+const guidelineBaseHeight = 812;
+const hs = (size: number) => (width / guidelineBaseWidth) * size;
+const vs = (size: number) => (height / guidelineBaseHeight) * size;
+const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 export default function SettingsScreen() {
   const { user, signOut } = useAuth();
   const [notifications, setNotifications] = React.useState(true);
   const [soundEffects, setSoundEffects] = React.useState(true);
   const [dailyReminders, setDailyReminders] = React.useState(true);
+  const NOTIFICATIONS_KEY = 'notifications_enabled';
+  const SOUND_KEY = 'sound_effects_enabled';
+  const REMINDER_KEY = 'daily_reminders_enabled';
+
+  React.useEffect(() => {
+    // Load persisted settings
+    (async () => {
+      const notif = await AsyncStorage.getItem(NOTIFICATIONS_KEY);
+      const sound = await AsyncStorage.getItem(SOUND_KEY);
+      const reminder = await AsyncStorage.getItem(REMINDER_KEY);
+      if (notif !== null) setNotifications(notif === 'true');
+      if (sound !== null) setSoundEffects(sound === 'true');
+      if (reminder !== null) setDailyReminders(reminder === 'true');
+    })();
+  }, []);
+
+  React.useEffect(() => {
+    AsyncStorage.setItem(NOTIFICATIONS_KEY, notifications.toString());
+    if (notifications) {
+      Notifications.requestPermissionsAsync();
+    } else {
+      Notifications.cancelAllScheduledNotificationsAsync();
+    }
+  }, [notifications]);
+
+  React.useEffect(() => {
+    AsyncStorage.setItem(SOUND_KEY, soundEffects.toString());
+    // Use soundEffects state elsewhere in app to mute/unmute
+  }, [soundEffects]);
+
+  React.useEffect(() => {
+    AsyncStorage.setItem(REMINDER_KEY, dailyReminders.toString());
+    if (dailyReminders) {
+      // Schedule daily reminder at 8am
+      Notifications.cancelAllScheduledNotificationsAsync();
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: 'Study Reminder',
+          body: 'Time to practice on Cyber Crucible!',
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+          hour: 8,
+          minute: 0,
+          repeats: true,
+        },
+      });
+    } else {
+      Notifications.cancelAllScheduledNotificationsAsync();
+    }
+  }, [dailyReminders]);
+
+  // Handlers for support links
+  const handleHelp = () => {
+    router.push('/help');
+  };
+  const handleContact = () => {
+    Linking.openURL('mailto:support@cybercrucible.com');
+  };
+  const handlePrivacy = () => {
+    WebBrowser.openBrowserAsync('https://cybercrucible.com/privacy');
+  };
 
   const handleSignOut = () => {
     Alert.alert(
@@ -45,6 +123,43 @@ export default function SettingsScreen() {
       [
         { text: 'Maybe Later', style: 'cancel' },
         { text: 'Upgrade Now', onPress: () => router.push('/subscription') },
+      ]
+    );
+  };
+
+  const handleResetData = () => {
+    Alert.alert(
+      "Reset All Progress",
+      "Warning: This will permanently erase:\n\n• Your quiz history and results\n• All performance statistics\n• Study time tracking\n• Achievement records\n\nThis action cannot be undone. Do you want to proceed?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Delete user answers
+              await supabase
+                .from('user_answers')
+                .delete()
+                .eq('user_id', user?.id);
+
+              // Delete quiz sessions
+              await supabase
+                .from('quiz_sessions')
+                .delete()
+                .eq('user_id', user?.id);
+
+              ToastAndroid.show('All progress has been reset successfully', ToastAndroid.SHORT);
+            } catch (error) {
+              console.error(error);
+              Alert.alert('Error', 'Failed to reset data. Please try again.');
+            }
+          }
+        }
       ]
     );
   };
@@ -80,13 +195,13 @@ export default function SettingsScreen() {
                   </View>
                 </View>
               </View>
-              <TouchableOpacity onPress={() => router.push('/profile')}>
+              {/* <TouchableOpacity onPress={() => router.push('/profile')}>
                 <ChevronRight size={20} color="#94A3B8" strokeWidth={2} />
-              </TouchableOpacity>
+              </TouchableOpacity> */}
             </View>
             <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/exam-selection')}>
               <View style={styles.menuItemInfo}>
-                <Text style={styles.menuItemText}>Exam Selection</Text>
+                <Text style={styles.menuItemText}>Course Selection</Text>
               </View>
               <ChevronRight size={20} color="#94A3B8" strokeWidth={2} />
             </TouchableOpacity>
@@ -130,19 +245,6 @@ export default function SettingsScreen() {
 
             <View style={styles.settingItem}>
               <View style={styles.settingInfo}>
-                <Volume2 size={20} color="#F8FAFC" strokeWidth={2} />
-                <Text style={styles.settingText}>Sound Effects</Text>
-              </View>
-              <Switch
-                value={soundEffects}
-                onValueChange={setSoundEffects}
-                trackColor={{ false: '#475569', true: '#F59E0B' }}
-                thumbColor="#FFFFFF"
-              />
-            </View>
-
-            <View style={styles.settingItem}>
-              <View style={styles.settingInfo}>
                 <Calendar size={20} color="#F8FAFC" strokeWidth={2} />
                 <Text style={styles.settingText}>Daily Study Reminders</Text>
               </View>
@@ -153,13 +255,25 @@ export default function SettingsScreen() {
                 thumbColor="#FFFFFF"
               />
             </View>
+            {/* <View style={styles.settingItem}>
+              <View style={styles.settingInfo}>
+                <Volume2 size={20} color="#F8FAFC" strokeWidth={2} />
+                <Text style={styles.settingText}>Sound Effects</Text>
+              </View>
+              <Switch
+                value={soundEffects}
+                onValueChange={setSoundEffects}
+                trackColor={{ false: '#475569', true: '#F59E0B' }}
+                thumbColor="#FFFFFF"
+              />
+            </View> */}
           </View>
 
           {/* Support Section */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Support</Text>
             
-            <TouchableOpacity style={styles.menuItem}>
+            <TouchableOpacity style={styles.menuItem} onPress={handleHelp}>
               <View style={styles.menuItemInfo}>
                 <HelpCircle size={20} color="#F8FAFC" strokeWidth={2} />
                 <Text style={styles.menuItemText}>Help & FAQ</Text>
@@ -167,7 +281,7 @@ export default function SettingsScreen() {
               <ChevronRight size={20} color="#94A3B8" strokeWidth={2} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.menuItem}>
+            <TouchableOpacity style={styles.menuItem} onPress={handleContact}>
               <View style={styles.menuItemInfo}>
                 <Mail size={20} color="#F8FAFC" strokeWidth={2} />
                 <Text style={styles.menuItemText}>Contact Support</Text>
@@ -175,7 +289,7 @@ export default function SettingsScreen() {
               <ChevronRight size={20} color="#94A3B8" strokeWidth={2} />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.menuItem}>
+            <TouchableOpacity style={styles.menuItem} onPress={handlePrivacy}>
               <View style={styles.menuItemInfo}>
                 <Shield size={20} color="#F8FAFC" strokeWidth={2} />
                 <Text style={styles.menuItemText}>Privacy Policy</Text>
@@ -188,6 +302,13 @@ export default function SettingsScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Account</Text>
             
+            <TouchableOpacity style={[styles.menuItem, styles.dangerItem]} onPress={handleResetData}>
+              <View style={styles.menuItemInfo}>
+                <Trash2 size={20} color="#EF4444" strokeWidth={2} />
+                <Text style={[styles.menuItemText, { color: '#EF4444' }]}>Reset All Progress</Text>
+              </View>
+            </TouchableOpacity>
+
             <TouchableOpacity style={[styles.menuItem, styles.signOutItem]} onPress={handleSignOut}>
               <View style={styles.menuItemInfo}>
                 <LogOut size={20} color="#EF4444" strokeWidth={2} />
@@ -357,6 +478,11 @@ const styles = StyleSheet.create({
   signOutItem: {
     borderColor: '#7F1D1D',
     backgroundColor: '#1E293B',
+  },
+  dangerItem: {
+    borderColor: '#7F1D1D',
+    backgroundColor: '#1E293B',
+    marginBottom: 12,
   },
   appInfo: {
     alignItems: 'center',
