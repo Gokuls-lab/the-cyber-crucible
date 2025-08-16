@@ -1,7 +1,7 @@
-import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CircleHelp as HelpCircle } from 'lucide-react-native';
+import React from 'react';
+import { SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 export default function HelpScreen() {
   return (
@@ -29,7 +29,7 @@ export default function HelpScreen() {
               </View>
               <View style={styles.helpText}>
                 <Text style={styles.helpQuestion}>How do I contact support?</Text>
-                <Text style={styles.helpAnswer}>You can contact support from the Settings screen or email us at support@cybercrucible.com.</Text>
+                <Text style={styles.helpAnswer}>You can contact support from the Settings screen or email us at support@thecybercruciora.com.</Text>
               </View>
             </View>
             <View style={styles.helpCard}>

@@ -2,29 +2,29 @@
 -- Table order and constraints may not be valid for execution.
 
 CREATE TABLE public.achievements (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid,
   title text NOT NULL,
   description text,
   icon text,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   achieved_at timestamp with time zone DEFAULT now(),
   CONSTRAINT achievements_pkey PRIMARY KEY (id),
   CONSTRAINT achievements_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id)
 );
 CREATE TABLE public.daily_questions (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   question_id uuid,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   date_assigned date DEFAULT CURRENT_DATE,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT daily_questions_pkey PRIMARY KEY (id),
   CONSTRAINT daily_questions_question_id_fkey FOREIGN KEY (question_id) REFERENCES public.questions(id)
 );
 CREATE TABLE public.exams (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   title text NOT NULL,
   short_name text NOT NULL,
-  description text DEFAULT ''::text,
   category text NOT NULL,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  description text DEFAULT ''::text,
   total_questions integer DEFAULT 0,
   passing_score integer DEFAULT 70,
   duration_minutes integer DEFAULT 90,
@@ -33,54 +33,65 @@ CREATE TABLE public.exams (
   CONSTRAINT exams_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.file_resource_exams (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   file_resource_id uuid,
   exam_id uuid,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT file_resource_exams_pkey PRIMARY KEY (id),
   CONSTRAINT file_resource_exams_exam_id_fkey FOREIGN KEY (exam_id) REFERENCES public.exams(id),
   CONSTRAINT file_resource_exams_file_resource_id_fkey FOREIGN KEY (file_resource_id) REFERENCES public.file_resources(id)
 );
 CREATE TABLE public.file_resources (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   title text NOT NULL,
   description text,
   file_name text,
   file_url text,
   resource_type text NOT NULL CHECK (resource_type = ANY (ARRAY['file'::text, 'youtube_link'::text])),
+  created_by uuid,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   is_active boolean DEFAULT true,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
-  created_by uuid,
   CONSTRAINT file_resources_pkey PRIMARY KEY (id),
   CONSTRAINT file_resources_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id)
 );
 CREATE TABLE public.question_options (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   question_id uuid,
   option_text text NOT NULL,
   option_letter text NOT NULL,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   is_correct boolean DEFAULT false,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT question_options_pkey PRIMARY KEY (id),
   CONSTRAINT question_options_question_id_fkey FOREIGN KEY (question_id) REFERENCES public.questions(id)
 );
 CREATE TABLE public.questions (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   question_text text NOT NULL UNIQUE,
+  domain text NOT NULL,
+  subject_id uuid NOT NULL,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   question_type text DEFAULT 'multiple_choice'::text CHECK (question_type = ANY (ARRAY['multiple_choice'::text, 'true_false'::text])),
   explanation text DEFAULT ''::text,
   difficulty text DEFAULT 'medium'::text CHECK (difficulty = ANY (ARRAY['easy'::text, 'medium'::text, 'hard'::text])),
-  domain text NOT NULL,
   created_at timestamp with time zone DEFAULT now(),
-  subject_id uuid NOT NULL,
   CONSTRAINT questions_pkey PRIMARY KEY (id),
   CONSTRAINT questions_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.subjects(id)
 );
+CREATE TABLE public.quiz_modes (
+  id text NOT NULL,
+  title text NOT NULL,
+  subtitle text NOT NULL,
+  num_questions integer,
+  time_per_question integer,
+  is_premium boolean DEFAULT false,
+  order_index integer DEFAULT 0,
+  is_active boolean DEFAULT true,
+  CONSTRAINT quiz_modes_pkey PRIMARY KEY (id)
+);
 CREATE TABLE public.quiz_sessions (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid,
   quiz_type text NOT NULL CHECK (quiz_type = ANY (ARRAY['daily'::text, 'quick_10'::text, 'timed'::text, 'level_up'::text, 'missed'::text, 'weakest'::text, 'custom'::text])),
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   score integer DEFAULT 0,
   total_questions integer DEFAULT 0,
   time_taken_seconds integer DEFAULT 0,
@@ -90,38 +101,38 @@ CREATE TABLE public.quiz_sessions (
   CONSTRAINT quiz_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id)
 );
 CREATE TABLE public.subject_exams (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   subject_id uuid NOT NULL,
   exam_id uuid NOT NULL,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT subject_exams_pkey PRIMARY KEY (id),
-  CONSTRAINT subject_exams_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.subjects(id),
-  CONSTRAINT subject_exams_exam_id_fkey FOREIGN KEY (exam_id) REFERENCES public.exams(id)
+  CONSTRAINT subject_exams_exam_id_fkey FOREIGN KEY (exam_id) REFERENCES public.exams(id),
+  CONSTRAINT subject_exams_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.subjects(id)
 );
 CREATE TABLE public.subjects (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   name text NOT NULL UNIQUE,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   description text DEFAULT ''::text,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT subjects_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.user_answers (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid,
   question_id uuid,
   selected_option_id uuid,
-  is_correct boolean DEFAULT false,
   quiz_session_id uuid,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  is_correct boolean DEFAULT false,
   answered_at timestamp with time zone DEFAULT now(),
   CONSTRAINT user_answers_pkey PRIMARY KEY (id),
-  CONSTRAINT user_answers_question_id_fkey FOREIGN KEY (question_id) REFERENCES public.questions(id),
   CONSTRAINT user_answers_quiz_session_id_fkey FOREIGN KEY (quiz_session_id) REFERENCES public.quiz_sessions(id),
+  CONSTRAINT user_answers_question_id_fkey FOREIGN KEY (question_id) REFERENCES public.questions(id),
   CONSTRAINT user_answers_selected_option_id_fkey FOREIGN KEY (selected_option_id) REFERENCES public.question_options(id),
   CONSTRAINT user_answers_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id)
 );
 CREATE TABLE public.user_progress (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid UNIQUE,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
   questions_answered integer DEFAULT 0,
   questions_correct integer DEFAULT 0,
   last_studied timestamp with time zone DEFAULT now(),
@@ -135,8 +146,8 @@ CREATE TABLE public.user_progress (
 CREATE TABLE public.users (
   id uuid NOT NULL,
   email text NOT NULL UNIQUE,
-  full_name text DEFAULT ''::text,
   avatar_url text,
+  full_name text DEFAULT ''::text,
   subscription_status text DEFAULT 'free'::text CHECK (subscription_status = ANY (ARRAY['free'::text, 'premium'::text])),
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),

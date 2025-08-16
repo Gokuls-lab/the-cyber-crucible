@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
 const guidelineBaseWidth = 375;
@@ -62,7 +63,23 @@ export default function TabLayout() {
         options={{
           title: 'Notes',
           tabBarIcon: ({ size, color }) => (
-            <BookOpen size={size} color={color} strokeWidth={2} />
+            <View
+              style={{
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: vs(70),
+                height: vs(70),
+                borderRadius: vs(70),
+                backgroundColor: color==='#F59E0B'? '#F59E0B' : 'transparent',
+                alignSelf: 'center',
+              }}
+            >
+              <BookOpen
+                size={size}
+                color={color==='#F59E0B'? '#FFF' : '#94A3B8'}
+                strokeWidth={2}
+              />
+            </View>
           ),
         }}
       />
@@ -72,7 +89,23 @@ export default function TabLayout() {
         options={{
           title: 'Stats',
           tabBarIcon: ({ size, color }) => (
-            <BarChart3 size={size} color={color} strokeWidth={2} />
+            <View
+              style={{
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: vs(70),
+                height: vs(70),
+                borderRadius: vs(70),
+                backgroundColor: color==='#F59E0B'? '#F59E0B' : 'transparent',
+                alignSelf: 'center',
+              }}
+            >
+              <BarChart3
+                size={size}
+                color={color==='#F59E0B'? '#FFF' : '#94A3B8'}
+                strokeWidth={2}
+              />
+            </View>
           ),
         }}
       />
@@ -80,7 +113,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: '',
+          title: 'Home',
           tabBarIcon: ({ size, color }) => (
             <View
               style={{
@@ -89,13 +122,13 @@ export default function TabLayout() {
                 width: vs(70),
                 height: vs(70),
                 borderRadius: vs(70),
-                backgroundColor: '#F59E0B',
+                backgroundColor: color==='#F59E0B'? '#F59E0B' : 'transparent',
                 alignSelf: 'center',
               }}
             >
               <Home
                 size={size}
-                color={color==='#F59E0B'? '#FFF' : '#FFF'}
+                color={color==='#F59E0B'? '#FFF' : '#94A3B8'}
                 strokeWidth={2}
               />
             </View>
@@ -108,7 +141,23 @@ export default function TabLayout() {
         options={{
           title: 'Review',
           tabBarIcon: ({ size, color }) => (
-            <History size={size} color={color} strokeWidth={2} />
+            <View
+              style={{
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: vs(70),
+                height: vs(70),
+                borderRadius: vs(70),
+                backgroundColor: color==='#F59E0B'? '#F59E0B' : 'transparent',
+                alignSelf: 'center',
+              }}
+            >
+              <History
+                size={size}
+                color={color==='#F59E0B'? '#FFF' : '#94A3B8'}
+                strokeWidth={2}
+              />
+            </View>
           ),
         }}
       />
@@ -118,7 +167,23 @@ export default function TabLayout() {
         options={{
           title: 'Settings',
           tabBarIcon: ({ size, color }) => (
-            <Settings size={size} color={color} strokeWidth={2} />
+            <View
+              style={{
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: vs(70),
+                height: vs(70),
+                borderRadius: vs(70),
+                backgroundColor: color==='#F59E0B'? '#F59E0B' : 'transparent',
+                alignSelf: 'center',
+              }}
+            >
+              <Settings
+                size={size}
+                color={color==='#F59E0B'? '#FFF' : '#94A3B8'}
+                strokeWidth={2}
+              />
+            </View>
           ),
         }}
       />

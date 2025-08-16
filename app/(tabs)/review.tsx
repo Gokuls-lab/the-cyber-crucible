@@ -32,7 +32,7 @@ const FILTER_OPTIONS = ['All', 'Incorrect answers', 'Correct answers','Recent'];
 export default function ReviewScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { exam, subject } = useExam();
+  const { exam } = useExam();
   const [selectedFilter, setSelectedFilter] = useState('All');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [expandedQuestion, setExpandedQuestion] = useState<number | null>(null);
@@ -44,25 +44,12 @@ export default function ReviewScreen() {
     setLoading(true);
     try {
       // Get latest quiz_sessions for user (limit to last 50 sessions)
-      // If exam is selected, get subject_ids for exam
-      let subjectIdsForExam: string[] | null = null;
-      if (exam) {
-        const { data: subjectExams, error: subjectExamError } = await supabase
-          .from('subject_exams')
-          .select('subject_id')
-          .eq('exam_id', exam.id);
-        if (subjectExamError) throw subjectExamError;
-        subjectIdsForExam = (subjectExams || []).map((se: any) => se.subject_id);
-        if (!subjectIdsForExam.length) {
-          setReviewedQuestions([]);
-          setLoading(false);
-          return;
-        }
-      }
+
       const { data: sessions, error: sessionError } = await supabase
         .from('quiz_sessions')
         .select('id, completed_at')
         .eq('user_id', user.id)
+        .eq('exam_id', exam?.id)
         .order('completed_at', { ascending: false })
         .limit(50);
       if (sessionError) throw sessionError;
@@ -88,9 +75,6 @@ export default function ReviewScreen() {
         `)
         .in('quiz_session_id', sessionIds)
         .order('answered_at', { ascending: false });
-      // Filter by exam's subjects if exam is selected
-      if (exam && subjectIdsForExam) answersQuery = answersQuery.in('questions.subject_id', subjectIdsForExam);
-      if (subject) answersQuery = answersQuery.eq('questions.subject_id', subject.id);
       const { data: answers, error: answerError } = await answersQuery;
       if (answerError) throw answerError;
       // For each answer, get the correct option
@@ -145,7 +129,7 @@ export default function ReviewScreen() {
     } finally {
       setLoading(false);
     }
-  }, [user, subject]);
+  }, [user, exam]);
 
   useEffect(() => {
     fetchReviewedQuestions();
@@ -290,7 +274,7 @@ export default function ReviewScreen() {
                       <Text style={styles.subjectText}>{question.subject}</Text>
                       {/* <Text style={styles.difficultyText}>{question.difficulty}</Text> */}
                     </View>
-                    <Text style={styles.questionText} numberOfLines={2}>
+                    <Text style={styles.questionText} >
                       {question.question}
                     </Text>
                   </View>

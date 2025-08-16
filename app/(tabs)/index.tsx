@@ -11,6 +11,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Svg, { Circle } from 'react-native-svg';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -22,12 +24,14 @@ const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
+import { useQuizModes } from '@/lib/QuizModes';
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { ChartBar as BarChart, Calendar, ChevronLeft, ChevronRight, Clock, Crown, CreditCard as Edit, Target, TrendingUp, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const today = new Date();
+
 const QUIZ_MODES = [
   {
     id: 'daily',
@@ -87,6 +91,20 @@ const QUIZ_MODES = [
   },
 ];
 
+function enrichModesFromLocal(fetchedModes: any[]): any[] {
+  return fetchedModes.map(fetched => {
+    const local = QUIZ_MODES.find(localMode => localMode.id === fetched.id);
+    return {
+      ...fetched,
+      subtitle: local?.id==='daily' ? today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : fetched.subtitle,
+      icon: local?.icon,
+      color: local?.color,
+      isPremium: fetched.is_premium,
+    };
+  });
+}
+
+
 export default function StudyScreen() {
 // const temp_app=true;
 // if(temp_app){
@@ -96,6 +114,14 @@ export default function StudyScreen() {
     
   const { user } = useAuth();
   const { exam } = useExam();
+  const {
+    data: rawQuizModes,
+    isLoading: isQuizModesLoading,
+    isError: isQuizModesError,
+    error: quizModesError
+  } = useQuizModes();
+  const quizModes = rawQuizModes ? enrichModesFromLocal(rawQuizModes) : [];
+  console.log(quizModes)
   const [showDailyQuestion, setShowDailyQuestion] = useState(false);
   const [studiedDays, setStudiedDays] = useState<number[]>([]);
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -141,6 +167,7 @@ export default function StudyScreen() {
         .from('quiz_sessions')
         .select('created_at')
         .eq('user_id', user.id)
+        .eq('exam_id', exam.id)
         .gte('created_at', `${startDate}T00:00:00`)
         .lte('created_at', `${endDate}T23:59:59`);
       // console.log('Supabase quiz_sessions data:', data, 'error:', error);
@@ -207,6 +234,7 @@ export default function StudyScreen() {
           const { data: dq, error: dqError } = await supabase
             .from('daily_questions')
             .select('id, question_id')
+            .eq('exam', exam.id)
             .eq('date_assigned', today)
             .single();
           if (dqError || !dq) throw dqError || new Error('No daily question');
@@ -263,6 +291,7 @@ export default function StudyScreen() {
             score: isCorrect ? 1 : 0,
             total_questions: 1,
             time_taken_seconds: 0, // You can set actual time if available
+            exam_id: exam.id,
             completed_at: new Date().toISOString(),
             created_at: new Date().toISOString(),
           },
@@ -307,7 +336,7 @@ export default function StudyScreen() {
       <SafeAreaView style={{...styles.safeArea,paddingBottom:vs(60) + (insets.bottom || 10)}}>
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
           {/* Header */}
-          <View style={styles.header}>
+          <View style={{...styles.header,display:'flex',alignItems:'baseline',justifyContent:'space-between',flexDirection:'row'}}>
             <Text style={styles.greeting}>{getGreeting()}</Text>
             {/* <Text style={styles.examTitle}>
               {exam ? exam.title : 'No exam selected. Please choose an exam.'}
@@ -317,7 +346,7 @@ export default function StudyScreen() {
             </Text> */}
             <TouchableOpacity onPress={() => router.push('/exam-selection')}> 
             <View style={styles.examSelector}>
-              <Text style={styles.examText}>{exam ? exam.title : ''}</Text>
+              <Text style={{...styles.examText,color:'#F59E0B',fontSize:vs(14)}}>{exam ? exam.short_name : ''}</Text>
             </View>
             </TouchableOpacity>
           </View>
@@ -416,9 +445,19 @@ export default function StudyScreen() {
           <View style={styles.quizModesContainer}>
             <Text style={styles.sectionTitle}>Quiz Modes</Text>
             
-            {QUIZ_MODES.map((mode) => {
+              {(isQuizModesLoading) &&
+                 (
+
+                      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                        <SpinnerAnimation />
+                      </View>
+                )
+              }
+            
+            {quizModes?.map((mode:any) => {
               const IconComponent = mode.icon;
-              return (
+              if(mode.is_active){
+                return (
                 <TouchableOpacity
                   key={mode.id}
                   style={styles.quizModeCard}
@@ -441,6 +480,7 @@ export default function StudyScreen() {
                   </View>
                 </TouchableOpacity>
               );
+            }
             })}
           </View>
         </ScrollView>
@@ -555,8 +595,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   examSelector: {
+    display:'flex',
+    alignItems:'center',
+    justifyContent:'center',
     backgroundColor: '#334155',
-    padding: 16,
+    padding: hs(14),
+    paddingVertical:vs(13),
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#475569',
@@ -565,7 +609,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#F8FAFC',
-    marginBottom: 4,
+    marginBottom: 0,
   },
   examSubtext: {
     fontSize: 14,
@@ -796,3 +840,31 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+function SpinnerAnimation() {
+  const rotation = useSharedValue(0);
+  React.useEffect(() => {
+    rotation.value = withRepeat(
+      withTiming(360, { duration: 1200, easing: Easing.linear }),
+      -1,
+      false
+    );
+  }, []);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotation.value}deg` }],
+  }));
+  return (
+    <Animated.View style={[{ width: 64, height: 64, marginBottom: 16 }, animatedStyle]}>
+      <Svg width={64} height={64} viewBox="0 0 64 64">
+        <Circle
+          cx={32}
+          cy={32}
+          r={28}
+          stroke="#F59E0B"
+          strokeWidth={6}
+          strokeDasharray={"44 88"}
+          fill="none"
+        />
+      </Svg>
+    </Animated.View>
+  );
+}

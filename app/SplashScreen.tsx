@@ -24,8 +24,8 @@ export default function SplashScreen({ onFinish, backgroundColor = '#050d18' }: 
 
   return (
     <View style={[styles.container, { backgroundColor }]}> 
-      <Image source={require('@/assets/images/splash-icon.png')} style={styles.logo} />
-      <Image source={require('@/assets/images/slogan.jpeg')} style={styles.slogan} />
+      <Image source={require('@/assets/images/splash-icon.png')} style={styles.slogan} />
+      {/* <Image source={require('@/assets/images/slogan.jpeg')} style={styles.slogan} /> */}
       <ActivityIndicator size="large" color="#fff" style={{ marginTop: 32 }} />
     </View>
   );
@@ -46,8 +46,8 @@ const styles = StyleSheet.create({
     marginLeft:vs(-10),
   },
   slogan: {
-    width: vs(220),
-    height: vs(60),
+    width: vs(250),
+    height: vs(100),
     marginLeft:vs(10),
     resizeMode: 'contain',
   },

@@ -24,7 +24,9 @@ import {
 } from 'react-native';
 import SectionedMultiSelect from 'react-native-sectioned-multi-select';
 
+import { useQuizModes } from '@/lib/QuizModes';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 
 
 // Responsive utility functions
@@ -57,6 +59,7 @@ interface Question {
 }
 
 export default function QuizScreen() {
+
   // Domain Dropdown
   const [domainOpen, setDomainOpen] = useState(false);
   const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
@@ -70,7 +73,12 @@ export default function QuizScreen() {
   const { mode } = useLocalSearchParams<{ mode: string }>();
   const { user } = useAuth();
   const { exam } = useExam();
-
+  const {
+    data: rawQuizModes,
+    isLoading: isQuizModesLoading,
+    isError: isQuizModesError,
+    error: quizModesError
+  } = useQuizModes();
   // Build your own quiz modal state
   const [showBuildQuizModal, setShowBuildQuizModal] = useState(false);
   const [buildQuizStarted, setBuildQuizStarted] = useState(false);
@@ -246,10 +254,23 @@ export default function QuizScreen() {
     setLoading(true);
     try {
       let questionCount = 10; // Default for quick_10
+    if (mode === 'quick_10') {
+      questionCount = rawQuizModes[1]?.num_questions;
+    }
+
+
       if (mode === 'timed') {
-        questionCount = 20;
-        setTimeLeft(45*questionCount);
+        questionCount = rawQuizModes[2]?.num_questions;
+        setTimeLeft(rawQuizModes[2]?.time_per_question * questionCount)
       }
+      if (mode === 'missed') {
+        questionCount = rawQuizModes[4]?.num_questions;
+      }
+      if (mode === 'weakest_subject') {
+        questionCount = rawQuizModes[5]?.num_questions;
+      }
+      
+      questionCount = questionCount || 10;
 
       if (mode === 'weakest_subject') {
         if (!user || !user.id) throw new Error('User not found');
@@ -264,16 +285,16 @@ export default function QuizScreen() {
           return;
         }
         const { data: weakestSubject, error: weakestSubjectError } = await supabase
-          .rpc('get_weakest_subject', { user_id_param: user.id, exam_id_param: exam.id });
+          .rpc('get_weakest_domain', { user_id_param: user.id, exam_id_param: exam.id });
 
         if (weakestSubjectError) throw weakestSubjectError;
         if (!weakestSubject || weakestSubject.length === 0) {
-          Alert.alert('No Weakest Subject', 'Could not determine your weakest subject. Have you answered any questions yet?');
+          Alert.alert('No Weakest Domain', 'Could not determine your weakest domain. Have you answered any questions yet?');
           router.back();
           return;
         }
 
-        const subjectId = weakestSubject[0].subject_id;
+        const domain = weakestSubject[0].domain;
 
         const { data, error } = await supabase
           .from('questions')
@@ -290,8 +311,8 @@ export default function QuizScreen() {
               is_correct
             )
           `)
-          .eq('subject_id', subjectId)
-          .limit(100);
+          .eq('domain', domain)
+          .limit(questionCount);
 
         if (error) throw error;
         setQuestions(
@@ -425,41 +446,78 @@ export default function QuizScreen() {
       //   .limit(questionCount);
       // if (error) throw error;
 
+      //[START] => Manual random
+      // const { data, error } = await supabase
+      //   .from('questions')
+      //   .select(`
+      //     id,
+      //     question_text,
+      //     explanation,
+      //     difficulty,
+      //     domain,
+      //     question_options (
+      //       id,
+      //       option_text,
+      //       option_letter,
+      //       is_correct
+      //     )
+      //   `)
+      //   // .in('subject_id', subjectIds)
+      //   .eq('exam',exam.id)
+      //   .limit(questionCount);
+
+
+      // if (error) throw error;
+
+      // // Shuffle the data manually
+      // const shuffled = data.sort(() => Math.random() - 0.5).slice(0, questionCount);
+
+      // const formattedQuestions = shuffled.map((q: any) => ({
+      //   id: q.id,
+      //   question_text: q.question_text,
+      //   explanation: q.explanation,
+      //   difficulty: q.difficulty,
+      //   domain: q.domain,
+      //   options: q.question_options.sort((a: any, b: any) => 
+      //     a.option_letter.localeCompare(b.option_letter)
+      //   ),
+      // }));
+      //[END] => Manual random
       const { data, error } = await supabase
-        .from('questions')
-        .select(`
-          id,
-          question_text,
-          explanation,
-          difficulty,
-          domain,
-          question_options (
+      .rpc('fetch_unique_random_questions', { 
+        p_exam_id: exam.id, 
+        p_limit_count: questionCount,
+        p_user_id: user?.id,
+        p_quiz_mode: mode
+      })
+      .select(`
             id,
-            option_text,
-            option_letter,
-            is_correct
+            question_text,
+            explanation,
+            difficulty,
+            domain,
+            question_options (
+              id,
+              option_text,
+              option_letter,
+              is_correct
+            )
+          `);
+
+        if (error) throw error;
+
+        const formattedQuestions = data.map(q => ({
+          id: q.id,
+          question_text: q.question_text,
+          explanation: q.explanation,
+          difficulty: q.difficulty,
+          domain: q.domain,
+          options: q.question_options.sort((a, b) =>
+            a.option_letter.localeCompare(b.option_letter)
           )
-        `)
-        .in('subject_id', subjectIds)
-        .limit(questionCount);
+        }));
 
-      if (error) throw error;
-
-      // Shuffle the data manually
-      const shuffled = data.sort(() => Math.random() - 0.5).slice(0, questionCount);
-
-      const formattedQuestions = shuffled.map((q: any) => ({
-        id: q.id,
-        question_text: q.question_text,
-        explanation: q.explanation,
-        difficulty: q.difficulty,
-        domain: q.domain,
-        options: q.question_options.sort((a: any, b: any) => 
-          a.option_letter.localeCompare(b.option_letter)
-        ),
-      }));
-
-      setQuestions(formattedQuestions);
+        setQuestions(formattedQuestions);
     } catch (err) {
       console.error('Error fetching questions:', err);
       Alert.alert('Error', 'Failed to load quiz questions');
@@ -567,6 +625,7 @@ export default function QuizScreen() {
           total_questions: questions.length,
           time_taken_seconds: timeTaken,
           completed_at: new Date().toISOString(),
+          exam_id: exam?.id,
         })
         .select('id')
         .single();
@@ -611,12 +670,12 @@ export default function QuizScreen() {
 
   const getQuizTitle = () => {
     switch (mode) {
-      case 'quick_10': return 'Practice Quiz';
-      case 'timed': return 'Timed Quiz';
-      case 'level_up': return 'Level Up Quiz';
-      case 'missed': return 'Missed Questions';
-      case 'weakest_subject': return 'Weakest Subject';
-      case 'custom': return 'Custom Quiz';
+      case 'quick_10': return rawQuizModes[1]?.title;
+      case 'timed': return rawQuizModes[2]?.title;
+      case 'level_up': return rawQuizModes[3]?.title;
+      case 'missed': return rawQuizModes[4]?.title;
+      case 'weakest_subject': return rawQuizModes[5]?.title;
+      case 'custom': return rawQuizModes[6]?.title;
       default: return 'Quiz';
     }
   };

@@ -1,12 +1,14 @@
+import Icon1 from '@/assets/images/icon.png';
 import { useAuth } from '@/contexts/AuthContext';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { ArrowLeft, ArrowRight, Eye, EyeOff, Shield } from 'lucide-react-native';
+import { ArrowLeft, ArrowRight, Eye, EyeOff } from 'lucide-react-native';
 import React, { useState } from 'react';
 import {
   Alert,
   Dimensions,
+  Image,
   KeyboardAvoidingView,
   SafeAreaView,
   ScrollView,
@@ -135,6 +137,7 @@ export default function AuthScreen() {
       Alert.alert('Sign In Error', error.message);
     } else {
       router.replace('/exam-selection');
+      // router.replace('/update');
     }
   } catch (error) {
     Alert.alert('Error', 'An unexpected error occurred');
@@ -170,9 +173,14 @@ export default function AuthScreen() {
           <View style={styles.onboardingContainer}>
             <View style={styles.logoContainer}>
               <View style={styles.logo}>
-                <Shield size={40} color="#F59E0B" strokeWidth={2} />
+                {/* <Shield size={40} color="#F59E0B" strokeWidth={2} /> */}
+                <Image
+                  source={Icon1}
+                  style={styles.logo}
+                  resizeMode="cover"
+                />
               </View>
-              <Text style={styles.logoText}>The Cyber Crucible</Text>
+              <Text style={styles.logoText}>The Cyber Cruciora</Text>
             </View>
 
             <View style={styles.slideContent}>
@@ -244,9 +252,14 @@ export default function AuthScreen() {
                 <ArrowLeft size={24} color="#94A3B8" />
               </TouchableOpacity>
               <View style={styles.logo}>
-                <Shield size={32} color="#F59E0B" strokeWidth={2} />
+                {/* <Shield size={32} color="#F59E0B" strokeWidth={2} /> */}
+                <Image
+                  source={Icon1}
+                  style={styles.logo}
+                  resizeMode="contain"
+                />
               </View>
-              <Text style={styles.logoText}>The Cyber Crucible</Text>
+              <Text style={styles.logoText}>The Cyber Cruciora</Text>
             </View>
 
             <View style={styles.formContainer}>
@@ -389,9 +402,9 @@ const styles = StyleSheet.create({
     padding: hs(8),
   },
   logo: {
-    width: hs(80),
-    height: hs(80),
-    backgroundColor: '#1E40AF',
+    width: hs(100),
+    height: hs(100),
+    // backgroundColor: '#1E40AF',
     borderRadius: ms(20),
     justifyContent: 'center',
     alignItems: 'center',

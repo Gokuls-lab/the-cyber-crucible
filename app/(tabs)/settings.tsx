@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { useExam } from '@/contexts/ExamContext';
 import { supabase } from '@/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -32,6 +33,7 @@ const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 export default function SettingsScreen() {
   const { user, signOut } = useAuth();
+  const { exam } = useExam();
   const [notifications, setNotifications] = React.useState(true);
   const [soundEffects, setSoundEffects] = React.useState(true);
   const [dailyReminders, setDailyReminders] = React.useState(true);
@@ -92,10 +94,10 @@ export default function SettingsScreen() {
     router.push('/help');
   };
   const handleContact = () => {
-    Linking.openURL('mailto:support@cybercrucible.com');
+    Linking.openURL('mailto:support@thecybercruciora.com');
   };
   const handlePrivacy = () => {
-    WebBrowser.openBrowserAsync('https://cybercrucible.com/privacy');
+    WebBrowser.openBrowserAsync('https://thecybercruciora.com/privacy');
   };
 
   const handleSignOut = () => {
@@ -130,7 +132,7 @@ export default function SettingsScreen() {
   const handleResetData = () => {
     Alert.alert(
       "Reset All Progress",
-      "Warning: This will permanently erase:\n\n• Your quiz history and results\n• All performance statistics\n• Study time tracking\n• Achievement records\n\nThis action cannot be undone. Do you want to proceed?",
+      "Warning:- This will permanently erase data for the current exam:\n\n• Your quiz history and results\n• All performance statistics\n• Study time tracking\n• Achievement records\n• Level Up Progress\n\nThis action cannot be undone. Do you want to proceed?",
       [
         {
           text: "Cancel",
@@ -141,17 +143,41 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              // Delete user answers
-              await supabase
-                .from('user_answers')
-                .delete()
-                .eq('user_id', user?.id);
-
-              // Delete quiz sessions
+              // Delete quiz sessions for the current exam
               await supabase
                 .from('quiz_sessions')
                 .delete()
-                .eq('user_id', user?.id);
+                .eq('user_id', user?.id)
+                .eq('exam_id', exam.id);
+
+              // Get all question IDs for the current exam to delete associated answers
+              const { data: examQuestions, error: questionsError } = await supabase
+                .from('questions')
+                .select('id')
+                .eq('exam', exam.id);
+
+              if (questionsError) throw questionsError;
+
+              const questionIds = examQuestions.map(q => q.id);
+
+              if (questionIds.length > 0) {
+                // Delete user answers for the questions in the current exam
+                await supabase
+                  .from('user_answers')
+                  .delete()
+                  .eq('user_id', user?.id)
+                  .in('question_id', questionIds);
+              }
+
+              // Note: user_progress is not exam-specific, so we might not want to reset it here
+              // or we need a more granular progress tracking per exam.
+              // For now, we'll leave it as is, but it's a point for future improvement.
+              // Delete user_progress
+              await supabase.rpc('update_exam_stage', {
+                              uid: user?.id,
+                              exam_id: exam.id,
+                              new_stage: 0,
+                            });
 
               ToastAndroid.show('All progress has been reset successfully', ToastAndroid.SHORT);
             } catch (error) {
@@ -318,8 +344,8 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.appInfo}>
-            <Text style={styles.appVersion}>The Cyber Crucible v1.0.0</Text>
-            <Text style={styles.appCopyright}>© 2024 Cyber Learning Solutions</Text>
+            <Text style={styles.appVersion}>The Cyber Cruciora v1.0.0</Text>
+            <Text style={styles.appCopyright}>© 2025 Cyber Learning Solutions</Text>
           </View>
         </ScrollView>
       </SafeAreaView>

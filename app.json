@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "cyber",
+    "name": "The Cyber Cruciora",
     "slug": "cyber",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "cyber",
+    "scheme": "the-cyber-cruciora",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -15,7 +15,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
-        "backgroundColor": "#050d18"
+        "backgroundColor": "#151827"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.gokul_04.cyber"
@@ -31,9 +31,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/icon.png",
-          "imageWidth": 200,
+          "imageWidth": 300,
           "resizeMode": "contain",
-          "backgroundColor": "#050d18"
+          "backgroundColor": "#151827"
         }
       ]
     ],

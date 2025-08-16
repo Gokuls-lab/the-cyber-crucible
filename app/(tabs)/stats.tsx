@@ -36,7 +36,11 @@ const SUBJECT_COLORS: Record<string, string> = {
   'Virtual TPM (vTPM)': '#EF4444',
   'Incident Response': '#F59E0B',
 };
-
+function subjectColor(score: number) {
+  if (score >= 80) return '#10B981';
+  if (score > 49) return '#F59E0B';
+  return '#EF4444';
+}
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
   const [achievements, setAchievements] = useState<any[]>([]);
@@ -51,41 +55,61 @@ export default function StatsScreen() {
     if (!user || !exam) return;
     setLoading(true);
     try {
-      // First fetch subjects
+      // 1. Fetch subjects for the exam
       const { data: subjectExams, error: subjectExamsError } = await supabase
         .from('subject_exams')
         .select('subject_id')
         .eq('exam_id', exam.id);
-
       if (subjectExamsError) throw subjectExamsError;
-
       const subjectIds = [...new Set((subjectExams || []).map((se: any) => se.subject_id).filter(Boolean))];
-
       const { data: filteredSubjects, error: subjectsError } = await supabase
         .from('subjects')
         .select('*')
         .in('id', subjectIds);
-
       if (subjectsError) throw subjectsError;
       setSubjects(filteredSubjects || []);
 
-      // Continue with existing stats fetch
+      // 2. Fetch all quiz sessions for the current exam
       const { data: sessions, error: sessionError } = await supabase
         .from('quiz_sessions')
         .select('id, completed_at, time_taken_seconds')
         .eq('user_id', user.id)
-        .order('completed_at', { ascending: false });
-
+        .eq('exam_id', exam.id);
       if (sessionError) throw sessionError;
 
+      // 3. Fetch all question IDs for the current exam
+      const { data: examQuestions, error: questionsError } = await supabase
+        .from('questions')
+        .select('id')
+        .eq('exam', exam.id);
+      if (questionsError) throw questionsError;
+      const questionIdsForExam = (examQuestions || []).map(q => q.id);
+
+      // If there are no questions for this exam, there's nothing to show.
+      if (questionIdsForExam.length === 0) {
+        setStats({ streak: 0, totalQuestions: 0, accuracy: 0, studyTime: '0m', weeklyProgress: Array(7).fill(0), subjectScores: [] });
+        setLoading(false);
+        return;
+      }
+
+      // 4. Fetch all user answers that belong to this exam's questions
+      // This is the most reliable way to scope the data, covering both quiz and review modes.
       let answersQuery = supabase
         .from('user_answers')
-        .select('id, is_correct, answered_at, question_id, quiz_session_id, questions:question_id (domain, subject_id)');
+        .select('id, is_correct, answered_at, question_id, quiz_session_id, questions:question_id (domain, subject_id)')
+        .eq('user_id', user.id)
+        .in('question_id', questionIdsForExam);
 
-      if (subject) answersQuery = answersQuery.eq('questions.subject_id', subject.id);
+      if (subject) {
+        answersQuery = answersQuery.eq('questions.subject_id', subject.id);
+      }
+
       const { data: answers, error: answerError } = await answersQuery.order('answered_at', { ascending: false });
       if (answerError) throw answerError;
 
+      // 5. All subsequent calculations are now correctly scoped because `answers` and `sessions` are filtered.
+
+      // Calculate Streak (from exam-specific sessions)
       const daysSet = new Set((sessions || []).map((s: any) => (s.completed_at || '').slice(0, 10)));
       const today = new Date();
       let streak = 0;
@@ -100,17 +124,15 @@ export default function StatsScreen() {
         }
       }
 
+      // Calculate Core Stats (from exam-specific answers)
       const totalQuestions = answers.length;
       const correctAnswers = answers.filter((a: any) => a.is_correct).length;
       const accuracy = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
 
-      // Calculate total quiz time from sessions
+      // Calculate Study Time
       const quizTimeSeconds = (sessions || []).reduce((sum: number, s: any) => sum + (s.time_taken_seconds || 0), 0);
-
-      // Calculate review time for non-quiz answers
       let reviewTimeSeconds = 0;
       const nonQuizAnswers = answers.filter(a => !a.quiz_session_id);
-      
       if (nonQuizAnswers.length > 0) {
         const answersByDate: Record<string, any[]> = {};
         nonQuizAnswers.forEach(a => {
@@ -120,34 +142,22 @@ export default function StatsScreen() {
         });
 
         Object.values(answersByDate).forEach(dateAnswers => {
-          const sortedAnswers = dateAnswers.sort((a, b) => 
-            new Date(a.answered_at).getTime() - new Date(b.answered_at).getTime()
-          );
-
-          // Fixed: Using correct reference for previous answer
+          const sortedAnswers = dateAnswers.sort((a, b) => new Date(a.answered_at).getTime() - new Date(b.answered_at).getTime());
           sortedAnswers.forEach((answer, index) => {
             if (index === 0) return;
-            const timeDiff = (new Date(answer.answered_at).getTime() - 
-                            new Date(sortedAnswers[index - 1].answered_at).getTime()) / 1000;
-            
-            // Only count if answers are within 5 minutes of each other
-            if (timeDiff <= 300) {
+            const timeDiff = (new Date(answer.answered_at).getTime() - new Date(sortedAnswers[index - 1].answered_at).getTime()) / 1000;
+            if (timeDiff <= 300) { // Only count if answers are within 5 minutes
               reviewTimeSeconds += timeDiff;
             }
           });
         });
       }
-
-      // Calculate total time and format appropriately
       const totalSeconds = quizTimeSeconds + reviewTimeSeconds;
       const totalMinutes = Math.round(totalSeconds / 60);
       const totalHours = totalMinutes / 60;
+      const studyTime = totalMinutes < 60 ? `${totalMinutes}m` : `${totalHours.toFixed(1)}h`;
 
-      // Format study time: show minutes if < 1 hour, otherwise show hours with 1 decimal
-      const studyTime = totalMinutes < 60 
-        ? `${totalMinutes}m`
-        : `${totalHours.toFixed(1)}h`;
-
+      // Calculate Weekly Progress
       const weeklyProgress = Array(7).fill(0);
       for (let i = 0; i < 7; i++) {
         const d = new Date(today);
@@ -156,13 +166,13 @@ export default function StatsScreen() {
         weeklyProgress[i] = answers.filter((a: any) => (a.answered_at || '').slice(0, 10) === ds).length;
       }
 
+      // Calculate Subject Scores
       const latestByQuestion: Record<string, any> = {};
       for (const a of answers) {
         if (!latestByQuestion[a.question_id] || new Date(a.answered_at).getTime() > new Date(latestByQuestion[a.question_id].answered_at).getTime()) {
           latestByQuestion[a.question_id] = a;
         }
       }
-
       const subjectMap: Record<string, { correct: number; total: number }> = {};
       for (const qid in latestByQuestion) {
         const a = latestByQuestion[qid];
@@ -174,13 +184,13 @@ export default function StatsScreen() {
         subjectMap[sid].total++;
         if (a.is_correct) subjectMap[sid].correct++;
       }
-
       const subjectScores = (filteredSubjects || []).map((s: any) => ({
         name: s.name,
         score: subjectMap[s.id] ? Math.round((subjectMap[s.id].correct / subjectMap[s.id].total) * 100) : 0,
         color: SUBJECT_COLORS[s.name] || '#3B82F6',
       }));
 
+      // 6. Set the final, correctly-scoped state
       setStats({
         streak,
         totalQuestions,
@@ -207,7 +217,7 @@ export default function StatsScreen() {
   const handleReset = async () => {
     Alert.alert(
       "Reset All Data",
-      "Warning: This action will permanently delete all your study progress, including:\n\n• Quiz history and results\n• Performance statistics\n• Study time tracking\n• Achievement records\n\nThis action cannot be undone. Are you sure you want to continue?",
+      "Warning:- This will permanently erase data for the current exam:\n\n• Your quiz history and results\n• All performance statistics\n• Study time tracking\n• Achievement records\n• Level Up Progress\n\nThis action cannot be undone. Do you want to proceed?",
       [
         {
           text: "Cancel",
@@ -220,17 +230,41 @@ export default function StatsScreen() {
             setLoading(true);
             try {
               
-              // Delete user answers
-              await supabase
-              .from('user_answers')
-              .delete()
-              .eq('user_id', user?.id);
-              
-              // Delete quiz sessions
+              // Delete quiz sessions for the current exam
               await supabase
                 .from('quiz_sessions')
                 .delete()
-                .eq('user_id', user?.id);
+                .eq('user_id', user?.id)
+                .eq('exam_id', exam.id);
+
+              // Get all question IDs for the current exam to delete associated answers
+              const { data: examQuestions, error: questionsError } = await supabase
+                .from('questions')
+                .select('id')
+                .eq('exam', exam.id);
+
+              if (questionsError) throw questionsError;
+
+              const questionIds = examQuestions.map(q => q.id);
+
+              if (questionIds.length > 0) {
+                // Delete user answers for the questions in the current exam
+                await supabase
+                  .from('user_answers')
+                  .delete()
+                  .eq('user_id', user?.id)
+                  .in('question_id', questionIds);
+              }
+
+              // Note: user_progress is not exam-specific, so we might not want to reset it here
+              // or we need a more granular progress tracking per exam.
+              // For now, we'll leave it as is, but it's a point for future improvement.
+              // Delete user_progress
+              await supabase.rpc('update_exam_stage', {
+                              uid: user?.id,
+                              exam_id: exam.id,
+                              new_stage: 0,
+                            });
               // Reset stats
               setStats(null);
               setAchievements([]);
@@ -376,6 +410,7 @@ export default function StatsScreen() {
                             styles.chartBar,
                             {
                               height: `${score}%`,
+                              maxHeight:'100%',
                               backgroundColor: index === 6 ? '#F59E0B' : '#3B82F6',
                             },
                           ]}
@@ -404,7 +439,7 @@ export default function StatsScreen() {
                               styles.progressBarFill,
                               {
                                 width: `${subject.score}%`,
-                                backgroundColor: subject.color,
+                                backgroundColor: subjectColor(subject.score),
                               },
                             ]}
                           />

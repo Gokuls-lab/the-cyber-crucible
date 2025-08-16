@@ -1,16 +1,16 @@
-import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  TouchableOpacity,
-} from 'react-native';
-import { Dimensions } from 'react-native';
+import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Target, Clock, ChevronLeft, BarChart } from 'lucide-react-native';
-import { supabase } from '@/lib/supabase';
+import { BarChart, ChevronLeft, Clock, Target } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  Dimensions,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -22,6 +22,7 @@ const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 export default function ResultsScreen() {
   const { session } = useLocalSearchParams<{ session: string }>();
+  const { mode } = useLocalSearchParams<{ mode: string }>();
   const [results, setResults] = useState<any>(null);
   const [exam, setExam] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -121,13 +122,26 @@ export default function ResultsScreen() {
               <Text style={styles.statLabel}>Time</Text>
             </View>
           </View>
-
+{
+  mode === 'level_up' && (
+    <TouchableOpacity
+    style={styles.button}
+    onPress={() => router.replace('/quiz/levelup')}
+  >
+    <Text style={styles.buttonText}>continue</Text>
+  </TouchableOpacity>
+  )
+}
+{
+  mode !== 'level_up' && (
           <TouchableOpacity
             style={styles.button}
             onPress={() => router.replace('/(tabs)')}
           >
             <Text style={styles.buttonText}>Return to Home</Text>
           </TouchableOpacity>
+          )
+}
         </View>
       </SafeAreaView>
     </LinearGradient>

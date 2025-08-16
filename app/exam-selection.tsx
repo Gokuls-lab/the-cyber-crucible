@@ -20,21 +20,35 @@ const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 import { useExam } from '@/contexts/ExamContext';
 import { supabase } from '@/lib/supabase';
+import { Exam } from '@/types';
+import { useQuery } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { ArrowLeft, ChevronRight, Search } from 'lucide-react-native';
 
 export default function ExamSelectionScreen() {
   const [searchQuery, setSearchQuery] = useState('');
-  const [exams, setExams] = useState<any[]>([]);
+  const [exams, setExams] = useState<Exam[]>([]);
   const { setExam } = useExam();
+  // Fetch exams
+  const { data: examsData, isLoading } = useQuery({
+    queryKey: ['exams'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('exams')
+        .select('*, questions(count)')
+        .eq('is_active', true)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data.map(exam => ({ ...exam, questions_count: (exam.questions as any)[0]?.count || 0 })) as Exam[];
+    },
+  });
 
   useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase.from('exams').select('*').eq('is_active', true);
-      if (!error && Array.isArray(data)) setExams(data);
-    })();
-  }, []);
+    if (!isLoading) {
+      setExams(examsData || []);
+    }
+  }, [isLoading, examsData]);
 
   const filteredExams = exams.filter(exam =>
     exam.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -42,7 +56,7 @@ export default function ExamSelectionScreen() {
   );
 
   // User selects an exam and is routed directly to the dashboard; no version selection required.
-  const handleExamSelect = (exam: any) => {
+  const handleExamSelect = (exam: Exam) => {
     setExam(exam);
     router.replace('/(tabs)');
   };
@@ -86,7 +100,7 @@ export default function ExamSelectionScreen() {
                   <Text style={styles.examCode}>{exam.short_name}</Text>
                   <View style={styles.examMeta}>
                     <Text style={styles.examMetaText}>
-                      {exam.total_questions || 0} questions
+                      {exam.questions_count || 0} questions
                     </Text>
                   </View>
                 </View>
