@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import {
   Dimensions,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -19,6 +19,7 @@ const vs = (size: number) => (height / guidelineBaseHeight) * size;
 const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 import { useExam } from '@/contexts/ExamContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import { Exam } from '@/types';
 import { useQuery } from '@tanstack/react-query';
@@ -27,6 +28,9 @@ import { router } from 'expo-router';
 import { ArrowLeft, ChevronRight, Search } from 'lucide-react-native';
 
 export default function ExamSelectionScreen() {
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
   const [searchQuery, setSearchQuery] = useState('');
   const [exams, setExams] = useState<Exam[]>([]);
   const { setExam } = useExam();
@@ -63,12 +67,12 @@ export default function ExamSelectionScreen() {
 
 
   return (
-    <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={{ flex: 1, paddingBottom: insets.bottom + 20 }}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <ArrowLeft size={24} color="#F8FAFC" strokeWidth={2} />
+            <ArrowLeft size={24} color={colors.text} strokeWidth={2} />
           </TouchableOpacity>
           <Text style={styles.title}>Choose Course</Text>
         </View>
@@ -100,7 +104,7 @@ export default function ExamSelectionScreen() {
                   <Text style={styles.examCode}>{exam.short_name}</Text>
                   <View style={styles.examMeta}>
                     <Text style={styles.examMetaText}>
-                      {exam.questions_count || 0} questions
+                      {(exam as any).questions_count || 0} questions
                     </Text>
                   </View>
                 </View>
@@ -117,14 +121,14 @@ export default function ExamSelectionScreen() {
             )}
           </View>
         </ScrollView>
-      </SafeAreaView>
+      </View>
     </LinearGradient>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
-    paddingTop: 30,
+    // paddingTop: 30, // Removed hardcoded padding
     flex: 1,
   },
   safeArea: {
@@ -136,7 +140,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    borderBottomColor: colors.border,
   },
   backButton: {
     marginRight: 16,
@@ -144,23 +148,23 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.text,
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#334155',
+    backgroundColor: colors.inputBg,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 12,
     margin: 20,
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.border,
   },
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: '#F8FAFC',
+    color: colors.text,
     marginLeft: 12,
   },
   scrollView: {
@@ -172,18 +176,18 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 16,
-    color: '#CBD5E1',
+    color: colors.subText,
     marginBottom: 24,
   },
   examCard: {
-    backgroundColor: '#334155',
+    backgroundColor: colors.card,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.border,
   },
   examInfo: {
     flex: 1,
@@ -191,12 +195,12 @@ const styles = StyleSheet.create({
   examName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: colors.text,
     marginBottom: 4,
   },
   examCode: {
     fontSize: 14,
-    color: '#94A3B8',
+    color: colors.subText,
     marginBottom: 8,
   },
   examMeta: {
@@ -205,7 +209,7 @@ const styles = StyleSheet.create({
   },
   examMetaText: {
     fontSize: 12,
-    color: '#64748B',
+    color: colors.subText,
   },
   noResults: {
     alignItems: 'center',
@@ -214,12 +218,12 @@ const styles = StyleSheet.create({
   noResultsText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.subText,
     marginBottom: 8,
   },
   noResultsSubtext: {
     fontSize: 14,
-    color: '#64748B',
+    color: colors.subText,
     textAlign: 'center',
   },
 });

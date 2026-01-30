@@ -2,22 +2,23 @@ import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Dimensions,
-  SafeAreaView,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   ToastAndroid,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { ChartBar as BarChart, Calendar, Clock, RotateCw, Target, Trash2 } from 'lucide-react-native';
+import { ChartBar as BarChart, Calendar, ChevronDown, ChevronUp, Clock, Target, Trash2 } from 'lucide-react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import Svg, { Circle } from 'react-native-svg';
 
@@ -43,31 +44,45 @@ function subjectColor(score: number) {
 }
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
+
   const [achievements, setAchievements] = useState<any[]>([]);
   const { user } = useAuth();
   const { exam, subject, loading: examLoading } = useExam();
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [subjects, setSubjects] = useState<any[]>([]);
   const router = useRouter();
 
+  // UX Improvement: Topic filtering state
+  const [topicFilter, setTopicFilter] = useState<'weakest' | 'strongest' | 'all'>('weakest');
+  const [showAllTopics, setShowAllTopics] = useState(false);
+
+  // Animated values for entry
+  const opacity = useSharedValue(0);
+  const translateY = useSharedValue(20);
+
+  useEffect(() => {
+    if (!loading) {
+      opacity.value = withTiming(1, { duration: 800 });
+      translateY.value = withTiming(0, { duration: 800, easing: Easing.out(Easing.exp) });
+    }
+  }, [loading]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: translateY.value }],
+  }));
+
   const fetchStats = async () => {
     if (!user || !exam) return;
-    setLoading(true);
+    if (!refreshing) setLoading(true);
     try {
-      // 1. Fetch subjects for the exam
-      const { data: subjectExams, error: subjectExamsError } = await supabase
-        .from('subject_exams')
-        .select('subject_id')
-        .eq('exam_id', exam.id);
-      if (subjectExamsError) throw subjectExamsError;
-      const subjectIds = [...new Set((subjectExams || []).map((se: any) => se.subject_id).filter(Boolean))];
-      const { data: filteredSubjects, error: subjectsError } = await supabase
-        .from('subjects')
-        .select('*')
-        .in('id', subjectIds);
-      if (subjectsError) throw subjectsError;
-      setSubjects(filteredSubjects || []);
+      // 1. (Skipped) Subjects fetching removed as we now use Domains.
+      // Use existing 'subjects' state as empty or remove if fully unused later.
+      setSubjects([]);
 
       // 2. Fetch all quiz sessions for the current exam
       const { data: sessions, error: sessionError } = await supabase
@@ -77,23 +92,27 @@ export default function StatsScreen() {
         .eq('exam_id', exam.id);
       if (sessionError) throw sessionError;
 
-      // 3. Fetch all question IDs for the current exam
+      // 3. Fetch all question IDs and Domains for the current exam
       const { data: examQuestions, error: questionsError } = await supabase
         .from('questions')
-        .select('id')
+        .select('id, domain')
         .eq('exam', exam.id);
       if (questionsError) throw questionsError;
+
       const questionIdsForExam = (examQuestions || []).map(q => q.id);
+
+      // Get unique domains from the questions
+      const allDomains = [...new Set((examQuestions || []).map(q => q.domain).filter(d => d && d.trim() !== ''))].sort();
 
       // If there are no questions for this exam, there's nothing to show.
       if (questionIdsForExam.length === 0) {
         setStats({ streak: 0, totalQuestions: 0, accuracy: 0, studyTime: '0m', weeklyProgress: Array(7).fill(0), subjectScores: [] });
         setLoading(false);
+        setRefreshing(false);
         return;
       }
 
       // 4. Fetch all user answers that belong to this exam's questions
-      // This is the most reliable way to scope the data, covering both quiz and review modes.
       let answersQuery = supabase
         .from('user_answers')
         .select('id, is_correct, answered_at, question_id, quiz_session_id, questions:question_id (domain, subject_id)')
@@ -106,8 +125,6 @@ export default function StatsScreen() {
 
       const { data: answers, error: answerError } = await answersQuery.order('answered_at', { ascending: false });
       if (answerError) throw answerError;
-
-      // 5. All subsequent calculations are now correctly scoped because `answers` and `sessions` are filtered.
 
       // Calculate Streak (from exam-specific sessions)
       const daysSet = new Set((sessions || []).map((s: any) => (s.completed_at || '').slice(0, 10)));
@@ -166,31 +183,45 @@ export default function StatsScreen() {
         weeklyProgress[i] = answers.filter((a: any) => (a.answered_at || '').slice(0, 10) === ds).length;
       }
 
-      // Calculate Subject Scores
+      // Calculate Domain Performance (replaces Subject Scores)
       const latestByQuestion: Record<string, any> = {};
       for (const a of answers) {
         if (!latestByQuestion[a.question_id] || new Date(a.answered_at).getTime() > new Date(latestByQuestion[a.question_id].answered_at).getTime()) {
           latestByQuestion[a.question_id] = a;
         }
       }
-      const subjectMap: Record<string, { correct: number; total: number }> = {};
+
+      const domainMap: Record<string, { correct: number; total: number }> = {};
       for (const qid in latestByQuestion) {
         const a = latestByQuestion[qid];
-        let sid: string = 'Other';
-        if (a.questions && typeof a.questions === 'object' && 'subject_id' in a.questions && a.questions.subject_id) {
-          sid = String(a.questions.subject_id);
-        }
-        if (!subjectMap[sid]) subjectMap[sid] = { correct: 0, total: 0 };
-        subjectMap[sid].total++;
-        if (a.is_correct) subjectMap[sid].correct++;
+        // Use domain from the joined questions table
+        const domainName = a.questions?.domain || 'Other';
+
+        if (!domainMap[domainName]) domainMap[domainName] = { correct: 0, total: 0 };
+        domainMap[domainName].total++;
+        if (a.is_correct) domainMap[domainName].correct++;
       }
-      const subjectScores = (filteredSubjects || []).map((s: any) => ({
-        name: s.name,
-        score: subjectMap[s.id] ? Math.round((subjectMap[s.id].correct / subjectMap[s.id].total) * 100) : 0,
-        color: SUBJECT_COLORS[s.name] || '#3B82F6',
+
+      // Defined vibrant colors for domains to cycle through
+      const DOMAIN_PALETTE = [
+        '#3B82F6', // Blue
+        '#10B981', // Emerald
+        '#8B5CF6', // Violet
+        '#F59E0B', // Amber
+        '#EC4899', // Pink
+        '#06B6D4', // Cyan
+        '#F97316', // Orange
+        '#6366F1', // Indigo
+      ];
+
+      const getDomainColor = (index: number) => DOMAIN_PALETTE[index % DOMAIN_PALETTE.length];
+
+      const subjectScores = allDomains.map((domainName: string, index: number) => ({
+        name: domainName,
+        score: domainMap[domainName] ? Math.round((domainMap[domainName].correct / domainMap[domainName].total) * 100) : 0,
+        color: getDomainColor(index),
       }));
 
-      // 6. Set the final, correctly-scoped state
       setStats({
         streak,
         totalQuestions,
@@ -203,16 +234,18 @@ export default function StatsScreen() {
 
     } catch (err) {
       setStats(null);
-      alert('Failed to load stats.');
+      // alert('Failed to load stats.'); // Silent fail on refresh
       console.error(err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = React.useCallback(() => {
+    setRefreshing(true);
     fetchStats();
-  };
+  }, [user, exam]);
 
   const handleReset = async () => {
     Alert.alert(
@@ -229,7 +262,6 @@ export default function StatsScreen() {
           onPress: async () => {
             setLoading(true);
             try {
-              
               // Delete quiz sessions for the current exam
               await supabase
                 .from('quiz_sessions')
@@ -256,21 +288,18 @@ export default function StatsScreen() {
                   .in('question_id', questionIds);
               }
 
-              // Note: user_progress is not exam-specific, so we might not want to reset it here
-              // or we need a more granular progress tracking per exam.
-              // For now, we'll leave it as is, but it's a point for future improvement.
               // Delete user_progress
               await supabase.rpc('update_exam_stage', {
-                              uid: user?.id,
-                              exam_id: exam.id,
-                              new_stage: 0,
-                            });
+                uid: user?.id,
+                exam_id: exam.id,
+                new_stage: 0,
+              });
               // Reset stats
               setStats(null);
               setAchievements([]);
-              
+
               ToastAndroid.show('All data has been reset successfully', ToastAndroid.SHORT);
-              
+
               // Refresh stats to show empty state
               fetchStats();
             } catch (error) {
@@ -291,23 +320,26 @@ export default function StatsScreen() {
     }
   }, [user, exam, examLoading]);
 
+  // Max value for chart
+  const maxWeeklyValue = stats ? Math.max(...stats.weeklyProgress, 1) : 1;
+
   if (examLoading) {
     return (
-      <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.safeArea}>
-        <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+      <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={styles.safeArea}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <SpinnerAnimation />
+            <SpinnerAnimation color={colors.primary} />
             <Text style={{ color: '#CBD5E1', fontSize: 18, marginTop: 16 }}>Loading Stats...</Text>
           </View>
-        </SafeAreaView>
+        </View>
       </LinearGradient>
     );
   }
 
   if (!user || !exam) {
     return (
-      <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.safeArea}>
-        <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
+      <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={styles.safeArea}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             <Text style={{ color: '#F8FAFC', fontSize: 18, textAlign: 'center', marginBottom: 24 }}>
               Please select an exam to view your stats.
@@ -319,310 +351,432 @@ export default function StatsScreen() {
               <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>Select Exam</Text>
             </TouchableOpacity>
           </View>
-        </SafeAreaView>
+        </View>
       </LinearGradient>
     );
   }
 
   return (
-    <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-      <SafeAreaView style={{ ...styles.safeArea, paddingBottom: vs(60) + (insets.bottom || 10) }}>
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={{ flex: 1, paddingBottom: insets.bottom + 90 }}>
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#F59E0B" />
+          }
+        >
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>Your Statistics</Text>
               <Text style={styles.subtitle}>Track your certification journey</Text>
             </View>
             <View style={styles.headerButtons}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={handleReset}
                 style={[styles.iconButton, styles.resetButton]}
                 disabled={loading}
               >
-                <Trash2 
-                  size={20} 
-                  color="#EF4444" 
-                  style={loading ? { opacity: 0.5 } : undefined}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                onPress={handleRefresh}
-                style={styles.iconButton}
-                disabled={loading}
-              >
-                <RotateCw 
-                  size={20} 
-                  color="#F8FAFC" 
+                <Trash2
+                  size={20}
+                  color="#EF4444"
                   style={loading ? { opacity: 0.5 } : undefined}
                 />
               </TouchableOpacity>
             </View>
           </View>
 
-          {loading ? (
-            <View style={{ alignItems: 'center', marginTop: 20 }}>
-              <Text style={{ color: '#F8FAFC', fontSize: 16 }}>Loading stats...</Text>
+          {loading && !refreshing ? (
+            <View style={{ alignItems: 'center', marginTop: 50 }}>
+              <SpinnerAnimation color={colors.primary} />
+              <Text style={{ color: '#F8FAFC', fontSize: 16, marginTop: 16 }}>Analyzing performance...</Text>
             </View>
           ) : (
-            <>
+            <Animated.View style={[styles.contentContainer, animatedStyle]}>
               <View style={styles.metricsGrid}>
+                {/* Metric Cards with polished look */}
                 <View style={styles.metricCard}>
-                  <View style={styles.metricIcon}>
-                    <Calendar size={24} color="#F59E0B" strokeWidth={2} />
+                  <View style={[styles.metricIcon, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
+                    <Calendar size={24} color="#F59E0B" strokeWidth={2.5} />
                   </View>
-                  <Text style={styles.metricValue}>{stats?.streak}</Text>
+                  <Text style={styles.metricValue}>{stats?.streak || 0}</Text>
                   <Text style={styles.metricLabel}>Day Streak</Text>
                 </View>
 
                 <View style={styles.metricCard}>
-                  <View style={styles.metricIcon}>
-                    <Target size={24} color="#10B981" strokeWidth={2} />
+                  <View style={[styles.metricIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
+                    <Target size={24} color="#10B981" strokeWidth={2.5} />
                   </View>
-                  <Text style={styles.metricValue}>{stats?.accuracy ?? 'N/A'}%</Text>
+                  <Text style={styles.metricValue}>{stats?.accuracy ?? 0}%</Text>
                   <Text style={styles.metricLabel}>Accuracy</Text>
                 </View>
 
                 <View style={styles.metricCard}>
-                  <View style={styles.metricIcon}>
-                    <BarChart size={24} color="#3B82F6" strokeWidth={2} />
+                  <View style={[styles.metricIcon, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
+                    <BarChart size={24} color="#3B82F6" strokeWidth={2.5} />
                   </View>
-                  <Text style={styles.metricValue}>{stats?.totalQuestions}</Text>
+                  <Text style={styles.metricValue}>{stats?.totalQuestions || 0}</Text>
                   <Text style={styles.metricLabel}>Questions</Text>
                 </View>
 
                 <View style={styles.metricCard}>
-                  <View style={styles.metricIcon}>
-                    <Clock size={24} color="#8B5CF6" strokeWidth={2} />
+                  <View style={[styles.metricIcon, { backgroundColor: 'rgba(139, 92, 246, 0.1)' }]}>
+                    <Clock size={24} color="#8B5CF6" strokeWidth={2.5} />
                   </View>
-                  <Text style={styles.metricValue}>{stats?.studyTime}</Text>
+                  <Text style={styles.metricValue}>{stats?.studyTime || '0m'}</Text>
                   <Text style={styles.metricLabel}>Study Time</Text>
                 </View>
               </View>
 
+              {/* Normalized Weekly Chart */}
               <View style={styles.chartCard}>
-                <Text style={styles.cardTitle}>Weekly Progress</Text>
+                <Text style={styles.cardTitle}>Weekly Activity</Text>
                 <View style={styles.chartContainer}>
                   <View style={styles.chart}>
-                    {stats?.weeklyProgress?.map((score: number, index: number) => (
-                      <View key={index} style={styles.chartColumn}>
-                        <View
-                          style={[
-                            styles.chartBar,
-                            {
-                              height: `${score}%`,
-                              maxHeight:'100%',
-                              backgroundColor: index === 6 ? '#F59E0B' : '#3B82F6',
-                            },
-                          ]}
-                        />
-                        <Text style={styles.chartLabel}>
-                          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][index]}
-                        </Text>
-                      </View>
-                    ))}
+                    {stats?.weeklyProgress?.map((score: number, index: number) => {
+                      const heightPercentage = (score / maxWeeklyValue) * 100;
+                      // Ensure minimal visibility for 0 values or just use 4px
+                      // If score is 0, show very small bar for aesthetics
+                      const barHeight = (score > 0 ? `${heightPercentage}%` : 2) as any;
+
+                      return (
+                        <View key={index} style={styles.chartColumn}>
+                          {/* Bar Wrapper for centering/track */}
+                          <View style={styles.chartBarWrapper}>
+                            <View
+                              style={[
+                                styles.chartBar,
+                                {
+                                  height: barHeight,
+                                  backgroundColor: index === 6 ? '#F59E0B' : '#3B82F6',
+                                  opacity: score > 0 ? 1 : 0.3,
+                                },
+                              ]}
+                            />
+                          </View>
+                          <Text style={[styles.chartLabel, index === 6 && { color: '#F59E0B', fontWeight: 'bold' }]}>
+                            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][index]}
+                          </Text>
+                        </View>
+                      )
+                    })}
                   </View>
                 </View>
               </View>
 
               <View style={styles.chartCard}>
-                <View style={{ justifyContent: 'space-between', flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={styles.cardTitle}>Topic wise Performance</Text>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardTitleNoMargin}>Topic Performance</Text>
+                  {/* Filter Tabs */}
+                  <View style={styles.filterContainer}>
+                    {(['weakest', 'strongest', 'all'] as const).map((filter) => (
+                      <TouchableOpacity
+                        key={filter}
+                        onPress={() => {
+                          setTopicFilter(filter);
+                          setShowAllTopics(false); // Reset expansion on filter change
+                        }}
+                        style={[
+                          styles.filterTab,
+                          topicFilter === filter && styles.filterTabActive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.filterTabText,
+                            topicFilter === filter && styles.filterTabTextActive,
+                          ]}
+                        >
+                          {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
+
                 <View style={styles.subjectsContainer}>
-                  {stats?.subjectScores?.map((subject: any, index: number) => (
-                    <View key={index} style={styles.subjectRow}>
-                      <Text style={styles.subjectName}>{subject.name}</Text>
-                      <View style={styles.progressBarContainer}>
-                        <View style={styles.progressBarBg}>
-                          <View
-                            style={[
-                              styles.progressBarFill,
-                              {
-                                width: `${subject.score}%`,
-                                backgroundColor: subjectColor(subject.score),
-                              },
-                            ]}
-                          />
-                        </View>
-                        <Text style={styles.subjectScore}>{subject.score}%</Text>
-                      </View>
-                    </View>
-                  ))}
+                  {(() => {
+                    const allTopics = [...(stats?.subjectScores || [])];
+                    if (topicFilter === 'weakest') {
+                      allTopics.sort((a: any, b: any) => a.score - b.score);
+                    } else if (topicFilter === 'strongest') {
+                      allTopics.sort((a: any, b: any) => b.score - a.score);
+                    } else {
+                      allTopics.sort((a: any, b: any) => a.name.localeCompare(b.name));
+                    }
+
+                    const displayedTopics = showAllTopics ? allTopics : allTopics.slice(0, 5);
+
+                    if (allTopics.length === 0) {
+                      return <Text style={{ color: '#94A3B8', textAlign: 'center', padding: 20 }}>No topics available.</Text>;
+                    }
+
+                    return (
+                      <>
+                        {displayedTopics.map((subject: any, index: number) => (
+                          <View key={index} style={styles.subjectRow}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                              <Text
+                                style={styles.subjectName}
+                              >
+                                {subject.name}
+                              </Text>
+                              <Text style={[styles.subjectScore, { color: subjectColor(subject.score) }]}>{subject.score}%</Text>
+                            </View>
+                            <View style={styles.progressBarBg}>
+                              <View
+                                style={[
+                                  styles.progressBarFill,
+                                  {
+                                    width: `${subject.score}%`,
+                                    backgroundColor: subjectColor(subject.score),
+                                  },
+                                ]}
+                              />
+                            </View>
+                          </View>
+                        ))}
+
+                        {allTopics.length > 5 && (
+                          <TouchableOpacity
+                            style={styles.showMoreButton}
+                            onPress={() => setShowAllTopics(!showAllTopics)}
+                          >
+                            <Text style={styles.showMoreText}>
+                              {showAllTopics ? 'Show Less' : `Show All (${allTopics.length})`}
+                            </Text>
+                            {showAllTopics ? (
+                              <ChevronUp size={16} color="#64748B" />
+                            ) : (
+                              <ChevronDown size={16} color="#64748B" />
+                            )}
+                          </TouchableOpacity>
+                        )}
+                      </>
+                    );
+                  })()}
                 </View>
               </View>
-
-              {/* <View style={styles.chartCard}>
-                <Text style={styles.cardTitle}>Recent Achievements</Text>
-                <View style={styles.achievementsContainer}>
-                  {achievements.length === 0 ? (
-                    <Text style={{ color: '#94A3B8' }}>No recent achievements yet.</Text>
-                  ) : (
-                    achievements.map(a => (
-                      <View key={a.id} style={styles.achievementItem}>
-                        <View style={styles.achievementIcon} />
-                        <View style={styles.achievementText}>
-                          <Text style={styles.achievementTitle}>{a.title}</Text>
-                          <Text style={styles.achievementDesc}>{a.description}</Text>
-                        </View>
-                      </View>
-                    ))
-                  )}
-                </View>
-              </View> */}
-            </>
+            </Animated.View>
           )}
         </ScrollView>
-      </SafeAreaView>
+      </View>
     </LinearGradient>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
-    paddingTop: 30,
+    // paddingTop: 30, // Removed hardcoded padding
     flex: 1,
   },
   safeArea: {
     flex: 1,
-    backgroundColor: '#0F172A',
   },
   scrollView: {
     flex: 1,
     paddingHorizontal: 20,
   },
+  contentContainer: {
+    paddingBottom: 20,
+  },
   header: {
     marginTop: 20,
-    marginBottom: 30,
+    marginBottom: 24,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#F8FAFC',
-    marginBottom: 8,
+    color: colors.text,
+    marginBottom: 4,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#CBD5E1',
+    fontSize: 14,
+    color: colors.subText,
   },
   headerButtons: {
     flexDirection: 'row',
     gap: 8,
   },
   iconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#334155',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.inputBg,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.border,
   },
   resetButton: {
-    backgroundColor: '#1E1E1E',
-    borderColor: '#EF4444',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderColor: 'rgba(239, 68, 68, 0.3)',
   },
   metricsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
-    marginBottom: 30,
+    marginBottom: 24,
   },
   metricCard: {
-    backgroundColor: '#334155',
-    borderRadius: 16,
-    padding: 20,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    padding: 16,
     alignItems: 'center',
     width: '48%',
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
   },
   metricIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#1E293B',
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: colors.card,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
   },
   metricValue: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
-    color: '#F8FAFC',
-    marginBottom: 4,
+    color: colors.text,
+    marginBottom: 2,
   },
   metricLabel: {
-    fontSize: 14,
-    color: '#94A3B8',
+    fontSize: 13,
+    color: colors.subText,
     textAlign: 'center',
   },
   chartCard: {
-    backgroundColor: '#334155',
-    borderRadius: 16,
+    backgroundColor: colors.card,
+    borderRadius: 24,
     padding: 20,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.border,
   },
   cardTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.text,
     marginBottom: 20,
   },
+  cardHeader: {
+    marginBottom: 20,
+  },
+  cardTitleNoMargin: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 12,
+  },
+  filterContainer: {
+    flexDirection: 'row',
+    backgroundColor: colors.background,
+    borderRadius: 8,
+    padding: 4,
+    gap: 0,
+  },
+  filterTab: {
+    flex: 1,
+    paddingVertical: 6,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  filterTabActive: {
+    backgroundColor: colors.inputBg,
+  },
+  filterTabText: {
+    fontSize: 12,
+    color: colors.subText,
+    fontWeight: '600',
+  },
+  filterTabTextActive: {
+    color: colors.text,
+    fontWeight: '700',
+  },
+  showMoreButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    gap: 6,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  showMoreText: {
+    fontSize: 13,
+    color: colors.subText,
+    fontWeight: '600',
+  },
   chartContainer: {
-    height: 200,
+    height: 180,
   },
   chart: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
     height: '100%',
-    paddingBottom: 30,
+    // paddingBottom removed to allow columns to manage spacing
   },
   chartColumn: {
     alignItems: 'center',
     flex: 1,
     height: '100%',
     justifyContent: 'flex-end',
-    paddingBottom: 10,
+    gap: 8, // Add gap between bar and text
+  },
+  chartBarWrapper: {
+    flex: 1, // Flex 1 to take available height above text
+    width: 12,
+    justifyContent: 'flex-end', // Aligns bar to bottom of track
+    backgroundColor: colors.border,
+    borderRadius: 6,
+    overflow: 'hidden',
   },
   chartBar: {
-    width: 20,
-    borderRadius: 4,
-    marginBottom: 8,
+    width: '100%',
+    borderRadius: 6,
   },
   chartLabel: {
-    fontSize: 12,
-    color: '#94A3B8',
-    position: 'absolute',
-    bottom: 0,
+    fontSize: 11,
+    color: colors.subText,
+    textAlign: 'center',
+    width: '100%',
+    // Absolute positioning removed
   },
   subjectsContainer: {
     gap: 16,
   },
   subjectRow: {
-    gap: 12,
+    gap: 4,
   },
   subjectName: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    color: 'rgb(200,200,200)',
-    marginBottom: 8,
+    color: colors.text,
+    flex: 1,
+    marginRight: 12,
+    flexWrap: 'wrap',
+    lineHeight: 20,
   },
-  progressBarContainer: {
+  progressBarContainer: { // Not used in new layout but kept just in case
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
   progressBarBg: {
-    flex: 1,
     height: 8,
-    backgroundColor: '#1E293B',
+    backgroundColor: colors.background,
     borderRadius: 4,
     overflow: 'hidden',
   },
@@ -632,8 +786,7 @@ const styles = StyleSheet.create({
   },
   subjectScore: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#F8FAFC',
+    fontWeight: '700',
     minWidth: 40,
     textAlign: 'right',
   },
@@ -658,16 +811,16 @@ const styles = StyleSheet.create({
   achievementTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: colors.text,
     marginBottom: 4,
   },
   achievementDesc: {
     fontSize: 14,
-    color: '#94A3B8',
+    color: colors.subText,
   },
 });
 
-function SpinnerAnimation() {
+function SpinnerAnimation({ color = '#F59E0B' }: { color?: string }) {
   const rotation = useSharedValue(0);
   React.useEffect(() => {
     rotation.value = withRepeat(
@@ -686,7 +839,7 @@ function SpinnerAnimation() {
           cx={32}
           cy={32}
           r={28}
-          stroke="#F59E0B"
+          stroke={color}
           strokeWidth={6}
           strokeDasharray={"44 88"}
           fill="none"

@@ -1,7 +1,8 @@
+import { useTheme } from '@/contexts/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { BarChart, ChevronLeft, Clock, Target } from 'lucide-react-native';
+import { BarChart, ChevronLeft, Clock, Home, Repeat, Target, Trophy } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import {
   Dimensions,
@@ -11,6 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import ConfettiCannon from 'react-native-confetti-cannon';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -21,6 +23,7 @@ const vs = (size: number) => (height / guidelineBaseHeight) * size;
 const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 export default function ResultsScreen() {
+  const { colors } = useTheme();
   const { session } = useLocalSearchParams<{ session: string }>();
   const { mode } = useLocalSearchParams<{ mode: string }>();
   const [results, setResults] = useState<any>(null);
@@ -32,7 +35,7 @@ export default function ResultsScreen() {
       router.replace('/(tabs)');
       return;
     }
-    
+
     fetchResults();
   }, [session]);
 
@@ -66,10 +69,10 @@ export default function ResultsScreen() {
 
   if (loading || !results) {
     return (
-      <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
+      <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.container}>
         <SafeAreaView style={styles.safeArea}>
           <View style={styles.loadingContainer}>
-            <Text style={styles.loadingText}>Loading results...</Text>
+            <Text style={[styles.loadingText, { color: colors.text }]}>Loading results...</Text>
           </View>
         </SafeAreaView>
       </LinearGradient>
@@ -79,69 +82,81 @@ export default function ResultsScreen() {
   const accuracy = Math.round((results.score / results.total_questions) * 100);
   const timeInMinutes = Math.round(results.time_taken_seconds / 60 * 10) / 10;
 
+  const passed = accuracy >= 70; // Assuming 70% is passing
+
   return (
-    <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.container}>
+      {passed && <ConfettiCannon count={200} origin={{ x: -10, y: 0 }} fadeOut={true} />}
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.header}>
-          <TouchableOpacity 
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity
             style={styles.backButton}
             onPress={() => router.replace('/(tabs)')}
           >
-            <ChevronLeft size={24} color="#F8FAFC" strokeWidth={2} />
+            <ChevronLeft size={24} color={colors.text} strokeWidth={2} />
           </TouchableOpacity>
-          <Text style={styles.title}>Quiz Results</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Quiz Results</Text>
         </View>
 
         <View style={styles.content}>
-          <Text style={styles.examTitle}>
-            {exam?.title || 'Quiz'}
-          </Text>
+          <View style={styles.scoreContainer}>
+            <View style={[styles.trophyContainer, { backgroundColor: passed ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)' }]}>
+              {passed ? <Trophy size={48} color={colors.primary} strokeWidth={1.5} /> : <Target size={48} color="#EF4444" strokeWidth={1.5} />}
+            </View>
+            <Text style={[styles.examTitle, { color: colors.text }]}>
+              {exam?.title || 'Quiz Complete'}
+            </Text>
+            <Text style={[styles.resultSubtitle, { color: colors.subText }]}>
+              {passed ? "Excellent work! Keep it up." : "Good effort. Keep practicing!"}
+            </Text>
+          </View>
 
           <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <View style={styles.statIcon}>
-                <Target size={24} color="#10B981" strokeWidth={2} />
+            <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={[styles.statIcon, { backgroundColor: colors.inputBg }]}>
+                <Target size={24} color={colors.primary} strokeWidth={2} />
               </View>
-              <Text style={styles.statValue}>{accuracy}%</Text>
-              <Text style={styles.statLabel}>Accuracy</Text>
+              <Text style={[styles.statValue, { color: colors.text }]}>{accuracy}%</Text>
+              <Text style={[styles.statLabel, { color: colors.subText }]}>Accuracy</Text>
             </View>
 
-            <View style={styles.statCard}>
-              <View style={styles.statIcon}>
+            <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={[styles.statIcon, { backgroundColor: colors.inputBg }]}>
                 <BarChart size={24} color="#3B82F6" strokeWidth={2} />
               </View>
-              <Text style={styles.statValue}>{results.score}</Text>
-              <Text style={styles.statLabel}>Score</Text>
+              <Text style={[styles.statValue, { color: colors.text }]}>{results.score}</Text>
+              <Text style={[styles.statLabel, { color: colors.subText }]}>Score</Text>
             </View>
 
-            <View style={styles.statCard}>
-              <View style={styles.statIcon}>
+            <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={[styles.statIcon, { backgroundColor: colors.inputBg }]}>
                 <Clock size={24} color="#8B5CF6" strokeWidth={2} />
               </View>
-              <Text style={styles.statValue}>{timeInMinutes}m</Text>
-              <Text style={styles.statLabel}>Time</Text>
+              <Text style={[styles.statValue, { color: colors.text }]}>{timeInMinutes}m</Text>
+              <Text style={[styles.statLabel, { color: colors.subText }]}>Time</Text>
             </View>
           </View>
-{
-  mode === 'level_up' && (
-    <TouchableOpacity
-    style={styles.button}
-    onPress={() => router.replace('/quiz/levelup')}
-  >
-    <Text style={styles.buttonText}>continue</Text>
-  </TouchableOpacity>
-  )
-}
-{
-  mode !== 'level_up' && (
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => router.replace('/(tabs)')}
-          >
-            <Text style={styles.buttonText}>Return to Home</Text>
-          </TouchableOpacity>
-          )
-}
+
+          <View style={{ width: '100%', gap: vs(12), marginTop: 'auto' }}>
+            {mode === 'level_up' && (
+              <TouchableOpacity
+                style={[styles.button, { backgroundColor: colors.primary }]}
+                onPress={() => router.replace('/quiz/levelup')}
+              >
+                <Repeat size={20} color="#0F172A" />
+                <Text style={styles.buttonText}>Continue Level Up</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: mode === 'level_up' ? 'transparent' : colors.primary, borderWidth: mode === 'level_up' ? 1 : 0, borderColor: colors.border }]}
+              onPress={() => router.replace('/(tabs)')}
+            >
+              <Home size={20} color={mode === 'level_up' ? colors.text : "#0F172A"} />
+              <Text style={[styles.buttonText, mode === 'level_up' && { color: colors.text }]}>Return to Home</Text>
+            </TouchableOpacity>
+          </View>
+
         </View>
       </SafeAreaView>
     </LinearGradient>
@@ -177,37 +192,52 @@ const styles = StyleSheet.create({
     marginRight: 16,
   },
   title: {
-    fontSize: 20,
+    fontSize: ms(20),
     fontWeight: '700',
     color: '#F8FAFC',
   },
   content: {
     flex: 1,
-    padding: 20,
+    padding: hs(20),
     alignItems: 'center',
   },
+  scoreContainer: {
+    alignItems: 'center',
+    marginVertical: vs(24),
+  },
+  trophyContainer: {
+    width: ms(80),
+    height: ms(80),
+    borderRadius: ms(40),
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: vs(16),
+  },
   examTitle: {
-    fontSize: 24,
+    fontSize: ms(24),
     fontWeight: '800',
     color: '#F8FAFC',
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: vs(8),
   },
-  examVersion: {
-    fontSize: 16,
+  resultSubtitle: {
+    fontSize: ms(16),
     color: '#94A3B8',
-    marginBottom: 32,
+    textAlign: 'center',
+    marginBottom: vs(2),
   },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 16,
-    marginBottom: 40,
+    gap: hs(12),
+    marginBottom: vs(40),
+    width: '100%',
+    justifyContent: 'center',
   },
   statCard: {
     backgroundColor: '#334155',
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: ms(16),
+    padding: hs(16),
     alignItems: 'center',
     flex: 1,
     minWidth: '30%',
@@ -215,32 +245,36 @@ const styles = StyleSheet.create({
     borderColor: '#475569',
   },
   statIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+    width: ms(48),
+    height: ms(48),
+    borderRadius: ms(12),
     backgroundColor: '#1E293B',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: vs(12),
   },
   statValue: {
-    fontSize: 24,
+    fontSize: ms(20),
     fontWeight: '800',
     color: '#F8FAFC',
-    marginBottom: 4,
+    marginBottom: vs(4),
   },
   statLabel: {
-    fontSize: 14,
+    fontSize: ms(13),
     color: '#94A3B8',
   },
   button: {
     backgroundColor: '#F59E0B',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingHorizontal: hs(24),
+    paddingVertical: vs(16),
+    borderRadius: ms(12),
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: hs(8),
   },
   buttonText: {
-    fontSize: 16,
+    fontSize: ms(16),
     fontWeight: '600',
     color: '#0F172A',
   },

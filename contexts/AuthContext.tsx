@@ -2,14 +2,20 @@ import { supabase } from '@/lib/supabase';
 import { User } from '@/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Session, User as SupabaseUser } from '@supabase/supabase-js';
+import * as Linking from 'expo-linking';
+import { router } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { Alert, AppState } from 'react-native';
 
 interface AuthContextType {
   session: Session | null;
   user: User | null;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signInWithGoogle: () => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
+  resetPassword: (email: string) => Promise<{ error: Error | null; data?: any }>;
   loading: boolean;
   error?: Error | null;
   /**
@@ -21,172 +27,251 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Ensure WebBrowser result is handled (required for Android)
+WebBrowser.maybeCompleteAuthSession();
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  // Timeout fallback if auth hangs for too long
+  // Phase 1: AppState Handler
+  // Explicitly tell Supabase to start/stop refreshing tokens based on app state
   useEffect(() => {
-    if (!loading) return;
-    const timeout = setTimeout(() => {
-      if (loading) {
-        console.error('[AuthProvider] Timeout: loading still true after 10s, forcing false');
-        setLoading(false);
-        setError(new Error('Timeout: Auth loading took too long'));
-      }
-    }, 15000); // Increased timeout to 15s for slower networks
-    return () => clearTimeout(timeout);
-  }, [loading]);
-
-  // Rehydrate session manually from AsyncStorage
-  const reloadSessionFromStorage = async () => {
-    try {
-      const value = await AsyncStorage.getItem('supabase.auth.token');
-      if (!value) return false;
-
-      const parsed = JSON.parse(value);
-      if (!parsed || !parsed.currentSession) return false;
-
-      await supabase.auth.setSession(parsed.currentSession);
-      console.log('[AuthProvider] Rehydrated session from AsyncStorage');
-      return true;
-    } catch (e) {
-      console.error('[AuthProvider] Failed to rehydrate session:', e);
-      return false;
-    }
-  };
-
-  // Session fetch with retry logic
-  const fetchSessionWithRetry = async (retryCount = 1) => {
-    try {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (error || !session) throw error || new Error('No session found');
-
-      setSession(session);
-      console.log('[AuthProvider] Initial session:', session);
-      if (session?.user) {
-        await fetchUserProfile(session.user);
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        supabase.auth.startAutoRefresh();
       } else {
-        setUser(null);
+        supabase.auth.stopAutoRefresh();
       }
-    } catch (err: any) {
-      console.error('[AuthProvider] Error getting initial session:', err);
-
-      const shouldRetry = retryCount > 0 && err?.message?.includes('Refresh Token Not Found');
-      if (shouldRetry) {
-        console.warn('[AuthProvider] Refresh token issue. Attempting rehydration...');
-        const success = await reloadSessionFromStorage();
-        if (success) {
-          return fetchSessionWithRetry(retryCount - 1);
-        }
-      }
-
-      setError(err);
-      setUser(null);
-    }
-  };
-
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
-
-  useEffect(() => {
-    let isMounted = true;
-    const doFetch = async () => {
-      setLoading(true);
-      await fetchSessionWithRetry();
-      if (isMounted) {
-        setLoading(false);
-        setIsInitialLoad(false);
-      }
-    };
-    doFetch();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setSession(session);
-      console.log('[AuthProvider] Auth state changed:', event, session);
-      // Only show loading on initial load or explicit sign in/out, not for TOKEN_REFRESHED
-      if (event === 'TOKEN_REFRESHED') {
-        if (session?.user) {
-          // Update user in background, no loading state
-          await fetchUserProfile(session.user, { background: true });
-        }
-        // Do not set loading to true/false
-        return;
-      }
-      // For other events (SIGNED_IN, SIGNED_OUT, etc)
-      setLoading(true);
-      if (session?.user) {
-        await fetchUserProfile(session.user);
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
     });
 
     return () => {
-      isMounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  // Phase 2: Initialization Fix
+  // Fetch session immediately, don't rely solely on the listener for initial load
+  useEffect(() => {
+    let mounted = true;
+
+    const initSession = async () => {
+      try {
+        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+
+        if (mounted) {
+          setSession(initialSession);
+          if (!initialSession) {
+            setLoading(false);
+          }
+        }
+      } catch (err: any) {
+        console.error('[AuthProvider] Init session error:', err);
+        if (mounted) {
+          setError(err);
+          setLoading(false);
+        }
+      }
+    };
+
+    initSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (mounted) {
+        console.log('[AuthContext] Auth State Change:', event);
+        setSession(newSession);
+
+        if (event === 'PASSWORD_RECOVERY') {
+          // User clicked the reset link and is now implicitly signed in.
+          // Redirect them to the update password screen.
+          router.replace('/auth/update-password');
+        }
+
+        // If session is wiped, clear user and stop loading immediately
+        if (!newSession) {
+          setUser(null);
+          setLoading(false);
+        }
+      }
+    });
+
+    return () => {
+      mounted = false;
       subscription.unsubscribe();
     };
   }, []);
 
-  // Add retry and background option
-  const fetchUserProfile = async (supabaseUser: SupabaseUser, opts?: { background?: boolean, maxRetries?: number }) => {
-    const maxRetries = opts?.maxRetries ?? 2;
-    let attempt = 0;
-    let lastError = null;
-    while (attempt <= maxRetries) {
+  // Phase 3: Deep Link Handling for Password Reset & Auth Callbacks
+  const processedCodes = React.useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const handleDeepLink = async (url: string | null) => {
+      if (!url) return;
+
+      console.log('[AuthProvider] Received deep link:', url);
+
       try {
-        const { data, error } = await supabase
+        // Helper to extract params from hash or query
+        const getParam = (paramName: string) => {
+          // Handle both ?param=val and #param=val and &param=val
+          const regex = new RegExp(`[?&#]${paramName}=([^&]+)`);
+          const match = url.match(regex);
+          return match ? decodeURIComponent(match[1]) : null;
+        };
+
+        const code = getParam('code');
+        const accessToken = getParam('access_token');
+        const refreshToken = getParam('refresh_token');
+        const type = getParam('type');
+        const errorDesc = getParam('error_description');
+
+        if (errorDesc) {
+          console.error('[AuthProvider] Deep link contains error:', errorDesc);
+          Alert.alert('Auth Error', errorDesc);
+          return;
+        }
+
+        if (code) {
+          if (processedCodes.current.has(code)) {
+            console.log('[AuthProvider] Code already processed, ignoring:', code);
+            return;
+          }
+          processedCodes.current.add(code);
+
+          console.log('[AuthProvider] Found PKCE code. Exchanging for session...');
+          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) {
+            console.error('[AuthProvider] Exchange code error:', error);
+            // Only alert if it's a genuine error, not a race condition we missed
+            // Alert.alert('Link Expired', 'This link is invalid or has expired.');
+          } else {
+            console.log('[AuthProvider] Successfully exchanged code for session.', data.session?.user?.id);
+          }
+          return;
+        }
+
+        if (accessToken && refreshToken) {
+          console.log('[AuthProvider] Found tokens. AccessLen:', accessToken.length, 'RefreshLen:', refreshToken.length, 'Type:', type);
+
+          const { error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+
+          if (error) {
+            console.error('[AuthProvider] setSession failed:', error);
+            console.log('[AuthProvider] Error details:', JSON.stringify(error, null, 2));
+          } else {
+            console.log('[AuthProvider] Session set successfully from tokens.');
+          }
+          return;
+        }
+
+        console.log('[AuthProvider] No auth params found in link.');
+
+      } catch (err) {
+        console.error('[AuthProvider] Error processing deep link:', err);
+      }
+    };
+
+    // Handle app opening from closed state
+    Linking.getInitialURL().then(handleDeepLink);
+
+    // Handle incoming links while app is open
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      handleDeepLink(url);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  // Phase 4: Deadlock Prevention & Decoupled Data Fetching
+  // Respond to session changes instead of blocking auth listener
+  useEffect(() => {
+    let mounted = true;
+
+    const handleSessionUser = async () => {
+      if (!session?.user) return;
+
+      try {
+        await fetchUserProfile(session.user);
+      } catch (err: any) {
+        console.error('[AuthProvider] Profile fetch error:', err);
+        if (mounted) setError(err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    handleSessionUser();
+
+    return () => {
+      mounted = false;
+    };
+  }, [session]);
+
+  const fetchUserProfile = async (supabaseUser: SupabaseUser) => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', supabaseUser.id)
+        .single();
+
+      if (error && error.code === 'PGRST116') {
+        // Create initial user profile if not exists
+        const newUser = {
+          id: supabaseUser.id,
+          email: supabaseUser.email!,
+          // Use provider metadata if available (for Google sign in)
+          full_name: supabaseUser.user_metadata?.full_name || '',
+          avatar_url: supabaseUser.user_metadata?.avatar_url || supabaseUser.user_metadata?.picture || null,
+          subscription_status: 'free' as const,
+        };
+
+        const { data: createdUser, error: createError } = await supabase
           .from('users')
-          .select('*')
-          .eq('id', supabaseUser.id)
+          .upsert(newUser)
+          .select()
           .single();
 
-        if (error && error.code === 'PGRST116') {
-          // Create initial user profile if not exists
-          const newUser = {
-            id: supabaseUser.id,
-            email: supabaseUser.email!,
-            full_name: supabaseUser.user_metadata?.full_name || '',
-            subscription_status: 'free' as const,
-          };
-
-          const { data: createdUser, error: createError } = await supabase
+        if (createError) throw createError;
+        setUser(createdUser);
+        console.log('[AuthProvider] Created new user profile', createdUser);
+      } else if (error) {
+        throw error;
+      } else {
+        // Sync avatar if missing in DB but present in auth metadata (e.g. from Google)
+        if (!data.avatar_url && (supabaseUser.user_metadata?.avatar_url || supabaseUser.user_metadata?.picture)) {
+          const newAvatar = supabaseUser.user_metadata.avatar_url || supabaseUser.user_metadata.picture;
+          const { data: updatedUser, error: updateError } = await supabase
             .from('users')
-            .upsert(newUser)
+            .update({ avatar_url: newAvatar })
+            .eq('id', data.id)
             .select()
             .single();
 
-          if (createError) throw createError;
-          setUser(createdUser);
-          console.log('[AuthProvider] Created new user profile', createdUser);
-          return createdUser;
-        } else if (error) {
-          console.error('[AuthProvider] Error fetching user:', error);
-          setUser(null);
-          setError(error);
-          lastError = error;
-        } else {
-          setUser(data);
-          console.log('[AuthProvider] Loaded user profile', data);
-          return data;
+          if (!updateError && updatedUser) {
+            setUser(updatedUser);
+            console.log('[AuthProvider] Loaded and updated user profile', updatedUser);
+            return;
+          }
         }
-      } catch (error) {
-        console.error('[AuthProvider] Error in fetchUserProfile:', error);
-        setUser(null);
-        setError(error as Error);
-        lastError = error;
-      }
-      attempt++;
-      // If not background, optionally add a short delay before retry
-      if (!opts?.background) await new Promise(res => setTimeout(res, 400));
-    }
-    // If all retries fail, only force logout if not background
-    if (!opts?.background) setUser(null);
-    return null;
-  };
 
+        setUser(data);
+        console.log('[AuthProvider] Loaded user profile', data);
+      }
+    } catch (error) {
+      console.error('[AuthProvider] Error in fetchUserProfile:', error);
+      setUser(null);
+      setError(error as Error);
+    }
+  };
 
   const signUp = async (email: string, password: string, fullName: string) => {
     try {
@@ -217,14 +302,100 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-    await AsyncStorage.removeItem('supabase.auth.token');
+  const signInWithGoogle = async () => {
+    try {
+      const redirectUrl = Linking.createURL('/auth/callback');
+      console.log('[AuthContext] Google Sign In Redirect URL:', redirectUrl);
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (error) throw error;
+      if (!data?.url) throw new Error('No url returned');
+
+      console.log('[AuthContext] Opening WebBrowser with URL:', data.url);
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
+      console.log('[AuthContext] WebBrowser result:', result);
+
+      if (result.type === 'success' && result.url) {
+        // Extract access_token and refresh_token from the URL (fragment or query)
+        // Linking.parse might not handle the hash fragment fully as we expect if it's not a standard deep link structure.
+
+        // Manual regex parsing is often safer for these redirect URLs
+        const AccessTokenMatch = result.url.match(/access_token=([^&]+)/);
+        const RefreshTokenMatch = result.url.match(/refresh_token=([^&]+)/);
+
+        const access_token = AccessTokenMatch ? AccessTokenMatch[1] : null;
+        const refresh_token = RefreshTokenMatch ? RefreshTokenMatch[1] : null;
+
+        if (access_token && refresh_token) {
+          console.log('[AuthContext] Setting session manually from tokens.');
+          const { error } = await supabase.auth.setSession({
+            access_token,
+            refresh_token,
+          });
+          if (error) throw error;
+        } else {
+          // Sometimes Supabase returns an error in the query params
+          const errorMatch = result.url.match(/error=([^&]+)/);
+          const errorDescriptionMatch = result.url.match(/error_description=([^&]+)/);
+          if (errorMatch) {
+            const errorCode = errorMatch[1];
+            const errorDesc = errorDescriptionMatch ? decodeURIComponent(errorDescriptionMatch[1].replace(/\+/g, ' ')) : errorCode;
+            throw new Error(errorDesc);
+          }
+        }
+      }
+
+      return { error: null };
+    } catch (error) {
+      console.error('Google Sign In Error:', error);
+      return { error: error as Error };
+    }
   };
 
-  console.log('[AuthProvider] Rendering provider', { session, user, loading, error });
+  const resetPassword = async (email: string) => {
+    try {
+      // Create a deep link to the specific update password page
+      // Note: Supabase will append access_token to this URL fragment
+      const redirectUrl = Linking.createURL('/auth/update-password');
+      console.log('[AuthContext] Reset Password Redirect URL:', redirectUrl);
+
+      const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: redirectUrl,
+      });
+      return { data, error };
+    } catch (error) {
+      return { error: error as Error };
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      // Race execution to prevent hanging if network is unstable
+      await Promise.race([
+        supabase.auth.signOut(),
+        new Promise(resolve => setTimeout(resolve, 2000))
+      ]);
+    } catch (error) {
+      console.error('Error signing out:', error);
+    } finally {
+      setUser(null);
+      setSession(null);
+      try {
+        await AsyncStorage.removeItem('supabase.auth.token');
+      } catch (e) {
+        // Ignore async storage error
+      }
+    }
+  };
+
+  console.log('[AuthProvider] Rendering provider', { session: session?.user?.id, user: user?.id, loading, error });
 
   const loginRequired = !loading && (!session || !user);
 
@@ -234,7 +405,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       signUp,
       signIn,
+      signInWithGoogle,
       signOut,
+      resetPassword,
       loading,
       error,
       loginRequired,
@@ -251,3 +424,4 @@ export function useAuth() {
   }
   return context;
 }
+

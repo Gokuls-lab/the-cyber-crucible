@@ -3,25 +3,30 @@ import {
   Alert,
   Dimensions,
   Linking,
-  SafeAreaView,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
   ToastAndroid,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
+import { useRevenueCat } from '@/contexts/RevenueCatContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { Bell, Calendar, ChevronRight, Crown, CircleHelp as HelpCircle, LogOut, Mail, Shield, Trash2, User } from 'lucide-react-native';
+import { Bell, Calendar, ChevronRight, Crown, CircleHelp as HelpCircle, LogOut, Mail, Moon, Shield, Sun, Trash2, User } from 'lucide-react-native';
+import { PACKAGE_TYPE } from 'react-native-purchases';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -32,8 +37,12 @@ const vs = (size: number) => (height / guidelineBaseHeight) * size;
 const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 export default function SettingsScreen() {
+  const { colors, isDark, toggleTheme } = useTheme();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
   const { user, signOut } = useAuth();
+  const { isPro, customerInfo, currentOffering } = useRevenueCat();
   const { exam } = useExam();
+  const insets = useSafeAreaInsets();
   const [notifications, setNotifications] = React.useState(true);
   const [soundEffects, setSoundEffects] = React.useState(true);
   const [dailyReminders, setDailyReminders] = React.useState(true);
@@ -174,10 +183,10 @@ export default function SettingsScreen() {
               // For now, we'll leave it as is, but it's a point for future improvement.
               // Delete user_progress
               await supabase.rpc('update_exam_stage', {
-                              uid: user?.id,
-                              exam_id: exam.id,
-                              new_stage: 0,
-                            });
+                uid: user?.id,
+                exam_id: exam.id,
+                new_stage: 0,
+              });
 
               ToastAndroid.show('All progress has been reset successfully', ToastAndroid.SHORT);
             } catch (error) {
@@ -190,35 +199,54 @@ export default function SettingsScreen() {
     );
   };
 
+  // Define dynamic titles (same as subscription page)
+  const PACKAGE_TITLES: Partial<Record<PACKAGE_TYPE, string>> = {
+    [PACKAGE_TYPE.MONTHLY]: "Cyber Starter (Monthly)",
+    [PACKAGE_TYPE.THREE_MONTH]: "Cyber Shield (Quarterly)",
+    [PACKAGE_TYPE.SIX_MONTH]: "Cyber Sentinel (Semi-Annual)",
+    [PACKAGE_TYPE.ANNUAL]: "Cyber Guardian (Annual)",
+    [PACKAGE_TYPE.LIFETIME]: "Cyber Elite (Lifetime)",
+  };
+
   return (
-    <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={{ flex: 1, paddingBottom: insets.bottom + 90 }}>
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
           <View style={styles.header}>
-            <Text style={styles.title}>Settings</Text>
-            <Text style={styles.subtitle}>Customize your experience</Text>
+            <Text style={styles.title}>Profile</Text>
+            <Text style={styles.subtitle}>Your profile information</Text>
           </View>
 
           {/* Profile Section */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Profile</Text>
+            {/* <Text style={styles.sectionTitle}>Profile</Text> */}
             <View style={styles.profileCard}>
               <View style={styles.profileInfo}>
                 <View style={styles.avatar}>
-                  <User size={24} color="#F8FAFC" strokeWidth={2} />
+                  {user?.avatar_url ? (
+                    <ExpoImage
+                      source={{ uri: user.avatar_url }}
+                      style={{ width: '100%', height: '100%', borderRadius: 16 }}
+                      priority="high"
+                      contentFit="cover"
+                      transition={1000}
+                    />
+                  ) : (
+                    <User size={24} color={colors.text} strokeWidth={2} />
+                  )}
                 </View>
                 <View style={styles.profileText}>
                   <Text style={styles.profileName}>{user?.full_name || 'User'}</Text>
                   <Text style={styles.profileEmail}>{user?.email}</Text>
-                  <View style={styles.subscriptionBadge}>
-                    <Crown size={14} color={user?.subscription_status === 'premium' ? '#F59E0B' : '#64748B'} strokeWidth={2} />
-                    <Text style={[
-                      styles.subscriptionText,
-                      { color: user?.subscription_status === 'premium' ? '#F59E0B' : '#64748B' }
-                    ]}>
-                      {user?.subscription_status === 'premium' ? 'Premium' : 'Free'}
-                    </Text>
-                  </View>
+                  {/* Only show the small badge when NOT premium - Premium users see the detailed card below */}
+                  {!isPro && (
+                    <View style={styles.subscriptionBadge}>
+                      <Crown size={14} color="#64748B" strokeWidth={2} />
+                      <Text style={[styles.subscriptionText, { color: colors.subText }]}>
+                        Free Plan
+                      </Text>
+                    </View>
+                  )}
                 </View>
               </View>
               {/* <TouchableOpacity onPress={() => router.push('/profile')}>
@@ -229,13 +257,14 @@ export default function SettingsScreen() {
               <View style={styles.menuItemInfo}>
                 <Text style={styles.menuItemText}>Course Selection</Text>
               </View>
-              <ChevronRight size={20} color="#94A3B8" strokeWidth={2} />
+              <ChevronRight size={20} color={colors.subText} strokeWidth={2} />
             </TouchableOpacity>
           </View>
 
           {/* Subscription Section */}
-          {user?.subscription_status !== 'premium' && (
-            <View style={styles.section}>
+          {/* Subscription Section */}
+          <View style={styles.section}>
+            {!isPro ? (
               <TouchableOpacity style={styles.premiumCard} onPress={handleUpgrade}>
                 <LinearGradient
                   colors={['#F59E0B', '#D97706']}
@@ -249,35 +278,174 @@ export default function SettingsScreen() {
                   <ChevronRight size={20} color="#0F172A" strokeWidth={2} />
                 </LinearGradient>
               </TouchableOpacity>
-            </View>
-          )}
+            ) : (
+              <View style={[styles.premiumCard, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, padding: 16 }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
+                  <View style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 12,
+                    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    marginRight: 14
+                  }}>
+                    <Crown size={22} color="#F59E0B" strokeWidth={2.5} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 2 }}>Pro Access</Text>
+                    <Text style={{ color: '#F59E0B', fontSize: 13, fontWeight: '600' }}>Active Subscription</Text>
+                  </View>
+                </View>
+
+                {(() => {
+                  // Get the first active entitlement dynamically
+                  const activeEntitlements = customerInfo?.entitlements?.active ?? {};
+                  const entitlementKeys = Object.keys(activeEntitlements);
+                  const ent = entitlementKeys.length > 0 ? activeEntitlements[entitlementKeys[0]] : null;
+
+                  const expiration = ent?.expirationDate || customerInfo?.latestExpirationDate;
+                  const productIdentifier = ent?.productIdentifier;
+                  const isSandbox = ent?.isSandbox;
+
+                  // Format the date properly
+                  let dateStr = 'Lifetime';
+                  if (expiration) {
+                    const expDate = new Date(expiration);
+                    dateStr = expDate.toLocaleDateString(undefined, {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                    });
+                  }
+
+                  // Resolve detailed Plan Name using Current Offering
+                  // 1. Try to find the package in the current offering that matches this product ID
+                  let displayTitle = 'Premium Subscription';
+
+                  if (productIdentifier) {
+                    // Attempt to find matching package
+                    const matchingPackage = currentOffering?.availablePackages.find(
+                      pkg => pkg.product.identifier === productIdentifier
+                    );
+
+                    if (matchingPackage) {
+                      // Best case: Found in offering, use mapped title
+                      displayTitle = PACKAGE_TITLES[matchingPackage.packageType] || matchingPackage.product.title;
+                    } else {
+                      // Fallback: Check ID string for clues
+                      const lowerId = productIdentifier.toLowerCase();
+                      if (lowerId.includes('month')) displayTitle = "Cyber Starter (Monthly)";
+                      else if (lowerId.includes('quarter') || lowerId.includes('3_month')) displayTitle = "Cyber Shield (Quarterly)";
+                      else if (lowerId.includes('half') || lowerId.includes('6_month')) displayTitle = "Cyber Sentinel (Semi-Annual)";
+                      else if (lowerId.includes('year') || lowerId.includes('annual')) displayTitle = "Cyber Guardian (Annual)";
+                      else if (lowerId.includes('life')) displayTitle = "Cyber Elite (Lifetime)";
+                      else {
+                        // Last resort: Capitalize ID
+                        displayTitle = productIdentifier.charAt(0).toUpperCase() + productIdentifier.slice(1).replace(/_/g, ' ');
+                      }
+                    }
+                  }
+
+                  return (
+                    <View style={{ width: '100%' }}>
+                      <View style={{
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+                        borderRadius: 12,
+                        padding: 14,
+                        marginBottom: 16
+                      }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                          <Text style={{ color: colors.subText, fontSize: 14 }}>Plan Type</Text>
+                          <Text style={{ fontWeight: '600', color: colors.text, fontSize: 14 }}>{displayTitle}</Text>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                          <Text style={{ color: colors.subText, fontSize: 14 }}>Renewal Date</Text>
+                          <Text style={{ fontWeight: '600', color: colors.text, fontSize: 14 }}>{dateStr}</Text>
+                        </View>
+                      </View>
+
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (isSandbox) {
+                            if (Platform.OS === 'android') {
+                              ToastAndroid.show('Test Mode: Cannot cancel manually', ToastAndroid.SHORT);
+                            } else {
+                              Alert.alert('Test Mode', 'In Sandbox, subscriptions expire automatically.');
+                            }
+                          } else {
+                            if (customerInfo?.managementURL) {
+                              Linking.openURL(customerInfo.managementURL);
+                            } else {
+                              Linking.openURL(Platform.OS === 'ios' ? 'https://apps.apple.com/account/subscriptions' : 'https://play.google.com/store/account/subscriptions');
+                            }
+                          }
+                        }}
+                        style={{
+                          paddingVertical: 12,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: 'transparent'
+                        }}
+                      >
+                        <Text style={{ color: colors.text, fontWeight: '600', fontSize: 14, marginRight: 8 }}>Manage Subscription</Text>
+                        <ChevronRight size={16} color={colors.text} />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })()}
+              </View>
+            )}
+          </View>
 
           {/* Preferences Section */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Preferences</Text>
-            
+
             <View style={styles.settingItem}>
               <View style={styles.settingInfo}>
-                <Bell size={20} color="#F8FAFC" strokeWidth={2} />
-                <Text style={styles.settingText}>Push Notifications</Text>
+                {isDark ? (
+                  <Moon size={20} color={colors.text} strokeWidth={2} />
+                ) : (
+                  <Sun size={20} color={colors.text} strokeWidth={2} />
+                )}
+                <Text style={styles.settingText}>Dark Mode</Text>
               </View>
               <Switch
-                value={notifications}
-                onValueChange={setNotifications}
-                trackColor={{ false: '#475569', true: '#F59E0B' }}
+                value={isDark}
+                onValueChange={toggleTheme}
+                trackColor={{ false: colors.border, true: colors.primary }}
                 thumbColor="#FFFFFF"
               />
             </View>
 
             <View style={styles.settingItem}>
               <View style={styles.settingInfo}>
-                <Calendar size={20} color="#F8FAFC" strokeWidth={2} />
+                <Bell size={20} color={colors.text} strokeWidth={2} />
+                <Text style={styles.settingText}>Push Notifications</Text>
+              </View>
+              <Switch
+                value={notifications}
+                onValueChange={setNotifications}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+
+            <View style={styles.settingItem}>
+              <View style={styles.settingInfo}>
+                <Calendar size={20} color={colors.text} strokeWidth={2} />
                 <Text style={styles.settingText}>Daily Study Reminders</Text>
               </View>
               <Switch
                 value={dailyReminders}
                 onValueChange={setDailyReminders}
-                trackColor={{ false: '#475569', true: '#F59E0B' }}
+                trackColor={{ false: colors.border, true: colors.primary }}
                 thumbColor="#FFFFFF"
               />
             </View>
@@ -298,36 +466,36 @@ export default function SettingsScreen() {
           {/* Support Section */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Support</Text>
-            
+
             <TouchableOpacity style={styles.menuItem} onPress={handleHelp}>
               <View style={styles.menuItemInfo}>
-                <HelpCircle size={20} color="#F8FAFC" strokeWidth={2} />
+                <HelpCircle size={20} color={colors.text} strokeWidth={2} />
                 <Text style={styles.menuItemText}>Help & FAQ</Text>
               </View>
-              <ChevronRight size={20} color="#94A3B8" strokeWidth={2} />
+              <ChevronRight size={20} color={colors.subText} strokeWidth={2} />
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.menuItem} onPress={handleContact}>
               <View style={styles.menuItemInfo}>
-                <Mail size={20} color="#F8FAFC" strokeWidth={2} />
+                <Mail size={20} color={colors.text} strokeWidth={2} />
                 <Text style={styles.menuItemText}>Contact Support</Text>
               </View>
-              <ChevronRight size={20} color="#94A3B8" strokeWidth={2} />
+              <ChevronRight size={20} color={colors.subText} strokeWidth={2} />
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.menuItem} onPress={handlePrivacy}>
               <View style={styles.menuItemInfo}>
-                <Shield size={20} color="#F8FAFC" strokeWidth={2} />
+                <Shield size={20} color={colors.text} strokeWidth={2} />
                 <Text style={styles.menuItemText}>Privacy Policy</Text>
               </View>
-              <ChevronRight size={20} color="#94A3B8" strokeWidth={2} />
+              <ChevronRight size={20} color={colors.subText} strokeWidth={2} />
             </TouchableOpacity>
           </View>
 
           {/* Account Section */}
-          <View style={styles.section}>
+          <View style={{ ...styles.section, paddingBottom: vs(20) }}>
             <Text style={styles.sectionTitle}>Account</Text>
-            
+
             <TouchableOpacity style={[styles.menuItem, styles.dangerItem]} onPress={handleResetData}>
               <View style={styles.menuItemInfo}>
                 <Trash2 size={20} color="#EF4444" strokeWidth={2} />
@@ -343,20 +511,15 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.appInfo}>
-            <Text style={styles.appVersion}>The Cyber Cruciora v1.0.0</Text>
-            <Text style={styles.appCopyright}>© 2025 Cyber Learning Solutions</Text>
-          </View>
         </ScrollView>
-      </SafeAreaView>
+      </View>
     </LinearGradient>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
-    paddingTop: 30,
-
+    // paddingTop removed (dynamic)
     flex: 1,
   },
   safeArea: {
@@ -367,18 +530,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   header: {
-    marginTop: 20,
+    marginTop: 20, // Reduced from 40
     marginBottom: 30,
   },
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: '#F8FAFC',
+    color: colors.text,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    color: '#CBD5E1',
+    color: colors.subText,
   },
   section: {
     marginBottom: 30,
@@ -386,17 +549,17 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.text,
     marginBottom: 16,
   },
   profileCard: {
-    backgroundColor: '#334155',
+    backgroundColor: colors.inputBg,
     borderRadius: 16,
     padding: 20,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.border,
   },
   profileInfo: {
     flex: 1,
@@ -418,12 +581,12 @@ const styles = StyleSheet.create({
   profileName: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.text,
     marginBottom: 4,
   },
   profileEmail: {
     fontSize: 14,
-    color: '#94A3B8',
+    color: colors.subText,
     marginBottom: 8,
   },
   subscriptionBadge: {
@@ -459,7 +622,7 @@ const styles = StyleSheet.create({
     color: '#1E293B',
   },
   settingItem: {
-    backgroundColor: '#334155',
+    backgroundColor: colors.inputBg,
     borderRadius: 12,
     padding: 16,
     flexDirection: 'row',
@@ -467,7 +630,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.border,
   },
   settingInfo: {
     flexDirection: 'row',
@@ -477,10 +640,10 @@ const styles = StyleSheet.create({
   settingText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: colors.text,
   },
   menuItem: {
-    backgroundColor: '#334155',
+    backgroundColor: colors.inputBg,
     borderRadius: 12,
     padding: 16,
     flexDirection: 'row',
@@ -488,7 +651,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.border,
     marginTop: 12,
   },
   menuItemInfo: {
@@ -499,15 +662,15 @@ const styles = StyleSheet.create({
   menuItemText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#F8FAFC',
+    color: colors.text,
   },
   signOutItem: {
     borderColor: '#7F1D1D',
-    backgroundColor: '#1E293B',
+    backgroundColor: colors.card,
   },
   dangerItem: {
     borderColor: '#7F1D1D',
-    backgroundColor: '#1E293B',
+    backgroundColor: colors.card,
     marginBottom: 12,
   },
   appInfo: {
@@ -516,11 +679,11 @@ const styles = StyleSheet.create({
   },
   appVersion: {
     fontSize: 14,
-    color: '#94A3B8',
+    color: colors.subText,
     marginBottom: 4,
   },
   appCopyright: {
     fontSize: 12,
-    color: '#64748B',
+    color: colors.subText,
   },
 });

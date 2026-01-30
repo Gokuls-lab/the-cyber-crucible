@@ -1,9 +1,11 @@
-import React from 'react';
-import { useEffect } from 'react';
-import { router } from 'expo-router';
+import Icon1 from '@/assets/images/icon.png';
 import { useAuth } from '@/contexts/AuthContext';
-import { View, ActivityIndicator, StyleSheet, Text, Dimensions } from 'react-native';
 import { useExam } from '@/contexts/ExamContext';
+import { useTheme } from '@/contexts/ThemeContext';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Redirect } from 'expo-router';
+import React, { useEffect } from 'react';
+import { ActivityIndicator, Dimensions, Image, StyleSheet, Text, View } from 'react-native';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -16,49 +18,60 @@ const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 export default function Index() {
   const { session, loading, error } = useAuth();
   const { exam } = useExam();
+  const { colors } = useTheme();
   const [timeoutError, setTimeoutError] = React.useState<string | null>(null);
 
   useEffect(() => {
-    if (!loading) {
-      if (session) {
-        if (!exam) {
-          console.log('[Index] Authenticated, no exam, navigating to /exam-selection');
-          router.replace('/exam-selection');
-        } else {
-          console.log('[Index] Authenticated, exam selected, navigating to /(tabs)');
-          router.replace('/(tabs)');
-        }
+    // If loading for more than 10s, show error
+    const timeout = setTimeout(() => {
+      setTimeoutError('App is taking too long to load. Please check your internet connection or try reinstalling.');
+      console.error('[Index] Loading timeout: stuck on splash screen.');
+    }, 10000);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  if (!loading) {
+    if (session) {
+      if (!exam) {
+        console.log('[Index] Authenticated, no exam, navigating to /exam-selection');
+        return <Redirect href="/exam-selection" />;
       } else {
-        console.log('[Index] Not authenticated, navigating to /auth');
-        router.replace('/auth');
+        console.log('[Index] Authenticated, exam selected, navigating to /(tabs)');
+        return <Redirect href="/(tabs)" />;
       }
     } else {
-      // If loading for more than 10s, show error
-      const timeout = setTimeout(() => {
-        setTimeoutError('App is taking too long to load. Please check your internet connection or try reinstalling.');
-        console.error('[Index] Loading timeout: stuck on splash screen.');
-      }, 10000);
-      return () => clearTimeout(timeout);
+      console.log('[Index] Not authenticated, navigating to /auth');
+      return <Redirect href="/auth" />;
     }
-  }, [session, loading, exam]);
+  }
 
   if (error || timeoutError) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#1E40AF" />
-        <View style={{ marginTop: 24 }}>
-          <Text style={{ color: 'red', fontSize: 16, textAlign: 'center' }}>
+      <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.container}>
+        <View style={styles.logoContainer}>
+          <Image source={Icon1} style={styles.logo} resizeMode="contain" />
+          <Text style={[styles.title, { color: colors.text }]}>The Cyber Cruciora</Text>
+        </View>
+        <View style={styles.statusContainer}>
+          <ActivityIndicator size="large" color={colors.error} />
+          <Text style={{ color: colors.error, fontSize: 16, textAlign: 'center', marginTop: 16, paddingHorizontal: 20 }}>
             {timeoutError || error?.message || 'Unknown error occurred.'}
           </Text>
         </View>
-      </View>
+      </LinearGradient>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <ActivityIndicator size="large" color="#1E40AF" />
-    </View>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.container}>
+      <View style={styles.logoContainer}>
+        <Image source={Icon1} style={styles.logo} resizeMode="contain" />
+        <Text style={[styles.title, { color: colors.text }]}>The Cyber Cruciora</Text>
+      </View>
+      <View style={styles.statusContainer}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    </LinearGradient>
   );
 }
 
@@ -67,6 +80,26 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0F172A',
+  },
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: vs(40),
+  },
+  logo: {
+    width: hs(120),
+    height: hs(120),
+    borderRadius: ms(24),
+    marginBottom: vs(24),
+  },
+  title: {
+    fontSize: ms(24),
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  statusContainer: {
+    position: 'absolute',
+    bottom: vs(50),
+    alignItems: 'center',
+    width: '100%',
   },
 });

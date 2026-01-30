@@ -1,10 +1,13 @@
 
+import { useTheme } from '@/contexts/ThemeContext';
 import { supabase } from '@/lib/supabase';
-import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
+import { AlertCircle, Download, Rocket } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Dimensions, Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 const { width, height } = Dimensions.get('window');
 const guidelineBaseWidth = 375;
 const guidelineBaseHeight = 812;
@@ -13,6 +16,9 @@ const vs = (size: number) => (height / guidelineBaseHeight) * size;
 const ms = (size: number, factor = 0.5) => size + (hs(size) - size) * factor;
 
 export default function UpdateScreen() {
+  const { colors, isDark } = useTheme();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
   const [latest, setLatest] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,160 +43,261 @@ export default function UpdateScreen() {
   }, [platform]);
 
   return (
-    <LinearGradient colors={['#232526', '#1a1a2e']} style={styles.container}>
-      <View style={styles.glassCard}>
-      <Image source={require('@/assets/images/update.png')} style={styles.logo} />
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View style={styles.contentContainer}>
+        {/* Header / Graphic */}
+        <View style={styles.graphicContainer}>
+          <View style={styles.iconCircle}>
+            <Rocket size={48} color={colors.primary} />
+          </View>
+          {/* <Image source={require('@/assets/images/update.png')} style={styles.logo} contentFit="contain" /> */}
+        </View>
 
-        {loading ? (
-          <ActivityIndicator color="#60a5fa" size="large" style={{marginTop: 32}} />
-        ) : error ? (
-          <Text style={styles.error}>{error}</Text>
-        ) : latest ? (
-          <>
-            <Text style={styles.title}>New update is Available</Text>
-            <Text style={styles.versionLabel}>Version {latest.version_name}</Text>
-            {latest.force_update ? (
-              <Text style={styles.forceUpdateText}>This update is required to continue using the app.</Text>
-            ) : (
-              <Text style={styles.optionalUpdateText}>A new version is available! Update for the latest features and fixes.</Text>
-            )}
-            <ScrollView style={styles.notesBox}>
-              <Text style={styles.notesTitle}>What's New</Text>
-              <Text style={styles.notes}>{latest.release_notes || 'No release notes provided.'}</Text>
-            </ScrollView>
-            <View style={styles.btnContainer}>
-
-            {latest.download_url ? (
-                <TouchableOpacity style={styles.downloadBtn} onPress={() => Linking.openURL(latest.download_url)}>
-                <Text style={styles.downloadText}>Update Now</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            {!latest.force_update && latest.download_url && (
-                <TouchableOpacity style={{...styles.downloadBtn,backgroundColor:'rgba(255,255,255,0.10)'}} onPress={() => router.replace('/(tabs)')}>
-                <Text style={styles.downloadText}>Update Later</Text>
-              </TouchableOpacity>
-            )}
+        <View style={styles.card}>
+          {loading ? (
+            <View style={styles.centerContent}>
+              <ActivityIndicator color={colors.primary} size="large" />
+              <Text style={styles.loadingText}>Checking for updates...</Text>
             </View>
-          </>
-        ) : (
-          <Text style={styles.error}>No update information found.</Text>
-        )}
+          ) : error ? (
+            <View style={styles.centerContent}>
+              <AlertCircle size={48} color={colors.error} />
+              <Text style={styles.errorText}>Failed to check for updates</Text>
+              <Text style={styles.errorSubText}>{error}</Text>
+              <TouchableOpacity style={styles.retryButton} onPress={() => {/* logic to retry */ }}>
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : latest ? (
+            <>
+              <View style={styles.headerSection}>
+                <Text style={styles.title}>Update Available</Text>
+                <View style={styles.versionBadge}>
+                  <Text style={styles.versionText}>v{latest.version_name}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.description}>
+                {latest.force_update
+                  ? "This is a critical update containing important security fixes and performance improvements. You must update to continue using the app."
+                  : "A new version of Cyber Crucible is available! Update now to access new features and improvements."}
+              </Text>
+
+              <View style={styles.notesContainer}>
+                <Text style={styles.notesHeader}>What's New:</Text>
+                <ScrollView style={styles.notesScroll} showsVerticalScrollIndicator={true}>
+                  <Text style={styles.notesText}>
+                    {latest.release_notes || '• General bug fixes and performance improvements.'}
+                  </Text>
+                </ScrollView>
+              </View>
+
+              <View style={styles.actionSection}>
+                {latest.download_url && (
+                  <TouchableOpacity
+                    style={styles.primaryButton}
+                    onPress={() => Linking.openURL(latest.download_url)}
+                  >
+                    <Download size={20} color="#FFFFFF" strokeWidth={2.5} style={{ marginRight: 8 }} />
+                    <Text style={styles.primaryButtonText}>Update Now</Text>
+                  </TouchableOpacity>
+                )}
+
+                {!latest.force_update && (
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    onPress={() => router.replace('/(tabs)')}
+                  >
+                    <Text style={styles.secondaryButtonText}>Not Now</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
+          ) : (
+            <View style={styles.centerContent}>
+              <Text style={styles.noUpdateText}>Your app is up to date!</Text>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => router.replace('/(tabs)')}
+              >
+                <Text style={styles.secondaryButtonText}>Continue to App</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       </View>
     </LinearGradient>
   );
 }
 
-
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
+    padding: 20,
+    justifyContent: 'center',
+  },
+  contentContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 500,
+    alignSelf: 'center',
+  },
+  graphicContainer: {
+    marginBottom: vs(30),
     alignItems: 'center',
     justifyContent: 'center',
-    padding: hs(12),
+  },
+  iconCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: colors.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   logo: {
-    width: vs(250),
-    height: vs(250),
-    resizeMode: 'contain',
-    marginBottom: vs(24),
-    marginLeft:vs(-10),
+    width: 200,
+    height: 200,
   },
-  glassCard: {
-    backgroundColor: 'rgba(255,255,255,0.10)',
-    borderRadius: hs(24),
-    padding: hs(18),
+  card: {
     width: '100%',
-    maxWidth: 400,
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    padding: 24,
     shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 5,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    marginTop: vs(40),
-    marginBottom: vs(24),
-    backdropFilter: 'blur(12px)', // web only
+    borderColor: colors.border,
+  },
+  centerContent: {
     alignItems: 'center',
+    padding: 20,
+  },
+  loadingText: {
+    marginTop: 16,
+    color: colors.subText,
+    fontSize: 16,
+  },
+  errorText: {
+    marginTop: 16,
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  errorSubText: {
+    marginTop: 8,
+    color: colors.error,
+    textAlign: 'center',
+  },
+  headerSection: {
+    alignItems: 'center',
+    marginBottom: 16,
   },
   title: {
-    fontSize: ms(22, 0.7),
-    fontWeight: 'bold',
-    color: '#fff',
-    letterSpacing: 1.2,
-    marginBottom: vs(14),
+    fontSize: 24,
+    fontWeight: '800',
+    color: colors.text,
+    marginBottom: 8,
     textAlign: 'center',
   },
-  versionLabel: {
-    color: '#fbbf24',
+  versionBadge: {
+    backgroundColor: colors.inputBg,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  versionText: {
+    color: colors.primary,
     fontWeight: '700',
-    fontSize: ms(16),
-    marginBottom: vs(10),
+    fontSize: 14,
+  },
+  description: {
+    color: colors.subText,
     textAlign: 'center',
+    fontSize: 16,
+    lineHeight: 24,
+    marginBottom: 24,
   },
-  forceUpdateText: {
-    color: '#ef4444',
-    fontWeight: 'bold',
-    fontSize: ms(14),
-    marginBottom: vs(10),
-    textAlign: 'center',
+  notesContainer: {
+    backgroundColor: colors.inputBg,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24,
+    maxHeight: 200,
   },
-  optionalUpdateText: {
-    color: '#60a5fa',
-    fontWeight: '600',
-    fontSize: ms(14),
-    marginBottom: vs(10),
-    textAlign: 'center',
+  notesHeader: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 14,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  notesBox: {
-    backgroundColor: 'rgba(30,41,59,0.7)',
-    borderRadius: hs(12),
-    padding: hs(18),
-    marginBottom: vs(16),
-    width: '100%',
-    height: '30%'
+  notesScroll: {
+    maxHeight: 150,
   },
-  notesTitle: {
-    color: '#a5b4fc',
-    fontWeight: 'bold',
-    marginBottom: vs(4),
-    fontSize: ms(13),
+  notesText: {
+    color: colors.subText,
+    fontSize: 14,
+    lineHeight: 22,
   },
-  notes: {
-    color: '#f1f5f9',
-    fontSize: ms(13),
-    fontStyle: 'italic',
-    marginBottom: vs(25),
+  actionSection: {
+    gap: 12,
   },
-  downloadBtn: {
-    backgroundColor: '#6366f1',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 32,
-    shadowColor: '#6366f1',
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    marginTop: vs(10),
-  },
-  downloadText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: ms(15),
-    letterSpacing: 1.1,
-    textAlign: 'center',
-  },
-  error: {
-    color: '#ef4444',
-    textAlign: 'center',
-    marginTop: vs(24),
-    fontSize: ms(15),
-  },
-  btnContainer: {
+  primaryButton: {
+    backgroundColor: colors.primary,
     flexDirection: 'row',
-    gap: vs(20),
-    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 16,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF', // Always white on primary
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    paddingVertical: 16,
+    alignItems: 'center',
     justifyContent: 'center',
   },
-}
-)
+  secondaryButtonText: {
+    color: colors.subText,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  retryButton: {
+    marginTop: 16,
+    padding: 10,
+  },
+  retryButtonText: {
+    color: colors.primary,
+    fontWeight: 'bold',
+  },
+  noUpdateText: {
+    fontSize: 18,
+    color: colors.text,
+    fontWeight: '600',
+    marginBottom: 20,
+  },
+});

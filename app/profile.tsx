@@ -1,9 +1,10 @@
-import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
-import { Crown, User, ChevronRight } from 'lucide-react-native';
+import { Image as ExpoImage } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Crown, User } from 'lucide-react-native';
+import React from 'react';
+import { ActivityIndicator, Alert, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function ProfileScreen() {
   const { user } = useAuth();
@@ -43,7 +44,16 @@ export default function ProfileScreen() {
           <View style={styles.profileCard}>
             <View style={styles.profileInfo}>
               <View style={styles.avatar}>
-                <User size={24} color="#F8FAFC" strokeWidth={2} />
+                {user?.avatar_url ? (
+                  <ExpoImage
+                    source={{ uri: user.avatar_url }}
+                    style={{ width: '100%', height: '100%', borderRadius: 16 }}
+                    contentFit="cover"
+                    transition={1000}
+                  />
+                ) : (
+                  <User size={24} color="#F8FAFC" strokeWidth={2} />
+                )}
               </View>
               <View style={styles.profileText}>
                 <Text style={styles.profileLabel}>Full Name</Text>

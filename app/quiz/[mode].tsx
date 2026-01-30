@@ -1,19 +1,20 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
+import { useRevenueCat } from '@/contexts/RevenueCatContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { updateProgress } from '@/lib/progress';
+import { useQuizModes } from '@/lib/QuizModes';
 import { supabase } from '@/lib/supabase';
 import { MaterialIcons as Icon } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, CheckCircle, Clock, RotateCcw, X } from 'lucide-react-native';
+import { AlertCircle, ArrowLeft, BookOpen, CheckCircle, Clock, Crown, Edit, RefreshCcw, RotateCcw, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
-
 import {
   Alert,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Switch,
@@ -22,12 +23,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import SectionedMultiSelect from 'react-native-sectioned-multi-select';
-
-import { useQuizModes } from '@/lib/QuizModes';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -50,6 +46,7 @@ interface Question {
   explanation: string;
   difficulty: string;
   domain: string;
+  is_premium: boolean; // Add this line
   options: {
     id: string;
     option_text: string;
@@ -59,26 +56,35 @@ interface Question {
 }
 
 export default function QuizScreen() {
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
 
   // Domain Dropdown
   const [domainOpen, setDomainOpen] = useState(false);
   const [selectedDomains, setSelectedDomains] = useState<string[]>([]);
-  const [domainItems, setDomainItems] = useState<{label: string, value: string}[]>([]);
+  const [domainItems, setDomainItems] = useState<{ label: string, value: string }[]>([]);
   // Subject Dropdown
   const [subjectOpen, setSubjectOpen] = useState(false);
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
-  const [subjectItems, setSubjectItems] = useState<{label: string, value: string}[]>([]);
-
-
+  const [subjectItems, setSubjectItems] = useState<{ label: string, value: string }[]>([]);
   const { mode } = useLocalSearchParams<{ mode: string }>();
   const { user } = useAuth();
+  const { isPro: isPremium } = useRevenueCat(); // Renamed to match existing logic
+
+  // Helper to filter query for free users
+  const applyPremiumFilter = (query: any) => {
+    if (!isPremium) {
+      return query.eq('is_premium', false);
+    }
+    return query;
+  };
   const { exam } = useExam();
   const {
-    data: rawQuizModes,
+    data: rawQuizModes = [],
     isLoading: isQuizModesLoading,
     isError: isQuizModesError,
     error: quizModesError
-  } = useQuizModes();
+  } = useQuizModes() as any;
   // Build your own quiz modal state
   const [showBuildQuizModal, setShowBuildQuizModal] = useState(false);
   const [buildQuizStarted, setBuildQuizStarted] = useState(false);
@@ -90,6 +96,7 @@ export default function QuizScreen() {
   const [buildQuizDifficulty, setBuildQuizDifficulty] = useState<string[]>([]);
   const [availableDomains, setAvailableDomains] = useState<string[]>([]);
   const [domainSearchText, setDomainSearchText] = useState<string>('');
+  const [customTimeMode, setCustomTimeMode] = useState(false);
 
   // ...existing states
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -102,91 +109,57 @@ export default function QuizScreen() {
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [startTime] = useState(Date.now());
 
-    // Update dropdown items when availableDomains/Subjects change
-    useEffect(() => {
-      setDomainItems(availableDomains.map(d => ({ label: d, value: d })));
-    }, [availableDomains]);
-    useEffect(() => {
-      setSubjectItems(availableSubjects.map(s => ({ label: s.name, value: s.id, domain: s.domain })));
-    }, [availableSubjects]);
-    // ...existing hooks
+  // Update dropdown items when availableDomains/Subjects change
+  useEffect(() => {
+    setDomainItems(availableDomains.map(d => ({ label: d, value: d })));
+  }, [availableDomains]);
+  useEffect(() => {
+    setSubjectItems(availableSubjects.map(s => ({ label: s.name, value: s.id, domain: s.domain })));
+  }, [availableSubjects]);
+  // ...existing hooks
   const insets = useSafeAreaInsets();
 
-  // Fetch available subjects for build your own quiz
-  // Re-fetch domains and subjects when modal opens or selectedDomains changes
+  // Fetch available domains for build your own quiz
   useEffect(() => {
     if (mode === 'custom') {
       setShowBuildQuizModal(true);
       setBuildQuizStarted(false);
       setLoading(false);
-      // Fetch domains for the exam, then fetch subjects for selected domains
-      const fetchDomainsAndSubjects = async () => {
+
+      const fetchDomains = async () => {
         if (!exam) return;
-        // 1. Get subject IDs for this exam
-        const { data: subjectExams, error: subjectExamError } = await supabase
-          .from('subject_exams')
-          .select('subject_id')
-          .eq('exam_id', exam.id);
-        if (subjectExamError) return;
-        if (!subjectExams || subjectExams.length === 0) {
-          setAvailableDomains([]);
-          setAvailableSubjects([]);
-          return;
-        }
-        const subjectIds = subjectExams.map(se => se.subject_id);
-        // 2. Fetch all unique domains across all subjects for this exam
-        const { data: domainsData, error: domainsError } = await supabase
+
+        // Fetch unique domains directly from questions linked to this exam
+        // utilizing the 'exam' column on the questions table.
+        const { data: qData, error } = await supabase
           .from('questions')
           .select('domain')
-          .in('subject_id', subjectIds);
-        if (domainsError || !domainsData) {
+          .eq('exam', exam.id);
+
+        if (error || !qData) {
+          console.error('Error fetching domains:', error);
           setAvailableDomains([]);
-          setAvailableSubjects([]);
           return;
         }
-        const uniqueDomains = Array.from(new Set(domainsData.map((q: { domain: string }) => q.domain)));
-        setAvailableDomains(uniqueDomains);
 
-        // 3. If domains are selected, fetch subjects that have at least one question in those domains
-        if (selectedDomains.length > 0) {
-          const { data: domainQuestions, error: dqErr } = await supabase
-            .from('questions')
-            .select('subject_id')
-            .in('domain', selectedDomains)
-            .in('subject_id', subjectIds);
-          if (dqErr || !domainQuestions) {
-            setAvailableSubjects([]);
-            return;
-          }
-          const domainSubjectIds = Array.from(new Set(domainQuestions.map((q: { subject_id: string }) => q.subject_id)));
-          if (domainSubjectIds.length === 0) {
-            setAvailableSubjects([]);
-            return;
-          }
-          // 4. Get subject details for those IDs
-          const { data: subjects, error: subjectsError } = await supabase
-            .from('subjects')
-            .select('id, name, domain')
-            .in('id', domainSubjectIds);
-          if (subjectsError) {
-            setAvailableSubjects([]);
-            return;
-          }
-          setAvailableSubjects(subjects || []);
-        } else {
-          setAvailableSubjects([]);
-        }
+        // Extract distinct domains
+        const unique = Array.from(new Set(qData.map((q: any) => q.domain)))
+          .filter(d => d && typeof d === 'string' && d.trim().length > 0)
+          .sort();
+
+        setAvailableDomains(unique);
       };
-      fetchDomainsAndSubjects();
+
+      fetchDomains();
     }
-  }, [mode, exam, selectedDomains]);
+  }, [mode, exam]);
 
   // Handler for starting custom quiz
   const handleStartBuildQuiz = async () => {
     setShowBuildQuizModal(false);
     setLoading(true);
     setBuildQuizStarted(true);
-  
+
     try {
       let query = supabase
         .from('questions')
@@ -199,21 +172,27 @@ export default function QuizScreen() {
           subject_id,
           question_options(*)
         `); // Restored question_options join
-  
-        console.log('selectedSubjects', selectedSubjects);
-        console.log('buildQuizDifficulty', buildQuizDifficulty);
-        console.log('selectedDomains', selectedDomains);
-        
 
-        if (buildQuizDifficulty && buildQuizDifficulty.length > 0) {
-          query = query.in('difficulty', buildQuizDifficulty);
-        }
-        if (selectedDomains && selectedDomains.length > 0) {
-          query = query.in('domain', selectedDomains);
-        }
-  
-      // Fetch a reasonable upper bound of questions (e.g., 1000)
-      query = query.limit(50);
+      if (exam?.id) {
+        query = query.eq('exam', exam.id);
+      }
+
+
+      console.log('selectedSubjects', selectedSubjects);
+      console.log('buildQuizDifficulty', buildQuizDifficulty);
+      console.log('selectedDomains', selectedDomains);
+
+
+      if (buildQuizDifficulty && buildQuizDifficulty.length > 0) {
+        query = query.in('difficulty', buildQuizDifficulty);
+      }
+      if (selectedDomains && selectedDomains.length > 0) {
+        query = query.in('domain', selectedDomains);
+      }
+
+      // Fetch a large pool to ensure randomness after shuffling
+      // We filter by valid questions (free/premium) at the DB level, so this limit returns only valid candidates.
+      query = applyPremiumFilter(query).limit(200);
 
       const { data, error } = await query;
       console.log('Supabase error:', error);
@@ -236,7 +215,10 @@ export default function QuizScreen() {
       }
       const mappedQuestions = (data as any[]).map(q => ({
         ...q,
-        options: q.question_options || [],
+        is_premium: q.is_premium, // Ensure this is mapped
+        options: (q.question_options || []).sort((a: any, b: any) =>
+          (a.option_letter || '').localeCompare(b.option_letter || '')
+        ),
       }));
       const shuffled = shuffle(mappedQuestions);
       const selected = shuffled.slice(0, buildQuizNumQuestions);
@@ -248,15 +230,19 @@ export default function QuizScreen() {
     setLoading(false);
   };
 
+
+
+
+
   const fetchQuestions = useCallback(async () => {
     if (mode === 'custom') return; // handled in build quiz modal
     if (!exam) return;
     setLoading(true);
     try {
       let questionCount = 10; // Default for quick_10
-    if (mode === 'quick_10') {
-      questionCount = rawQuizModes[1]?.num_questions;
-    }
+      if (mode === 'quick_10') {
+        questionCount = rawQuizModes[1]?.num_questions;
+      }
 
 
       if (mode === 'timed') {
@@ -269,7 +255,7 @@ export default function QuizScreen() {
       if (mode === 'weakest_subject') {
         questionCount = rawQuizModes[5]?.num_questions;
       }
-      
+
       questionCount = questionCount || 10;
 
       if (mode === 'weakest_subject') {
@@ -284,6 +270,7 @@ export default function QuizScreen() {
           router.back();
           return;
         }
+
         const { data: weakestSubject, error: weakestSubjectError } = await supabase
           .rpc('get_weakest_domain', { user_id_param: user.id, exam_id_param: exam.id });
 
@@ -296,7 +283,7 @@ export default function QuizScreen() {
 
         const domain = weakestSubject[0].domain;
 
-        const { data, error } = await supabase
+        let queryWeakest = supabase
           .from('questions')
           .select(`
             id,
@@ -311,14 +298,21 @@ export default function QuizScreen() {
               is_correct
             )
           `)
-          .eq('domain', domain)
-          .limit(questionCount);
+          .eq('domain', domain);
+
+        if (!isPremium) {
+          queryWeakest = queryWeakest.eq('is_premium', false);
+        }
+
+        const { data, error } = await queryWeakest.limit(questionCount);
 
         if (error) throw error;
         setQuestions(
           (data as any[]).map(q => ({
             ...q,
-            options: q.question_options || [],
+            options: (q.question_options || []).sort((a: any, b: any) =>
+              (a.option_letter || '').localeCompare(b.option_letter || '')
+            ),
           })) as Question[]
         );
         setLoading(false);
@@ -370,7 +364,7 @@ export default function QuizScreen() {
           return;
         }
         // Fetch the missed questions (and their options), but only for this exam's subjects
-        const { data, error } = await supabase
+        let missedQuery = supabase
           .from('questions')
           .select(`
             id,
@@ -387,8 +381,13 @@ export default function QuizScreen() {
             )
           `)
           .in('id', missedQuestionIds)
-          .in('subject_id', subjectIds)
-          .limit(questionCount);
+          .in('subject_id', subjectIds);
+
+        if (!isPremium) {
+          missedQuery = missedQuery.eq('is_premium', false);
+        }
+
+        const { data, error } = await missedQuery.limit(questionCount);
         if (error) throw error;
         if (!data || data.length === 0) {
           Alert.alert('No Missed Questions', 'You have not answered any questions incorrectly yet.');
@@ -403,6 +402,7 @@ export default function QuizScreen() {
           explanation: q.explanation,
           difficulty: q.difficulty,
           domain: q.domain,
+          is_premium: q.is_premium, // Ensure this is here
           options: q.question_options.sort((a: any, b: any) =>
             a.option_letter.localeCompare(b.option_letter)
           ),
@@ -484,13 +484,14 @@ export default function QuizScreen() {
       // }));
       //[END] => Manual random
       const { data, error } = await supabase
-      .rpc('fetch_unique_random_questions', { 
-        p_exam_id: exam.id, 
-        p_limit_count: questionCount,
-        p_user_id: user?.id,
-        p_quiz_mode: mode
-      })
-      .select(`
+        .rpc('fetch_mode_questions', {
+          p_exam_id: exam.id,
+          p_limit_count: questionCount,
+          p_user_id: user?.id,
+          p_quiz_mode: mode,
+          p_is_premium: isPremium
+        })
+        .select(`
             id,
             question_text,
             explanation,
@@ -501,23 +502,28 @@ export default function QuizScreen() {
               option_text,
               option_letter,
               is_correct
-            )
+            ),
+            is_premium
           `);
 
-        if (error) throw error;
+      if (error) throw error;
 
-        const formattedQuestions = data.map(q => ({
-          id: q.id,
-          question_text: q.question_text,
-          explanation: q.explanation,
-          difficulty: q.difficulty,
-          domain: q.domain,
-          options: q.question_options.sort((a, b) =>
-            a.option_letter.localeCompare(b.option_letter)
-          )
-        }));
+      let filteredData = (data as any[]) || [];
+      // Filtering is now handled by the RPC, so no need for client-side filtering.
 
-        setQuestions(formattedQuestions);
+      const formattedQuestions = filteredData.map(q => ({
+        id: q.id,
+        question_text: q.question_text,
+        explanation: q.explanation,
+        difficulty: q.difficulty,
+        domain: q.domain,
+        is_premium: q.is_premium,
+        options: q.question_options.sort((a: any, b: any) =>
+          a.option_letter.localeCompare(b.option_letter)
+        )
+      }));
+
+      setQuestions(formattedQuestions);
     } catch (err) {
       console.error('Error fetching questions:', err);
       Alert.alert('Error', 'Failed to load quiz questions');
@@ -616,6 +622,9 @@ export default function QuizScreen() {
       };
       const quizType = quizTypeMap[mode] || mode;
 
+      // Ensure user subscription status is respected (Double check in backend via RLS)
+      // This is just a frontend logical mapping if needed in future
+
       const { data: sessionData, error: sessionError } = await supabase
         .from('quiz_sessions')
         .insert({
@@ -680,180 +689,484 @@ export default function QuizScreen() {
     }
   };
 
+  const renderPremiumBanner = () => {
+    if (isPremium) return null;
+    return (
+      <View style={styles.premiumBanner}>
+        <Icon name="star" size={20} color="#FFD700" />
+        <Text style={styles.premiumBannerText}>
+          Free Plan: Access limited to free questions.
+        </Text>
+        <TouchableOpacity style={styles.upgradeButtonSmall} onPress={() => router.push('/subscription')}>
+          <Text style={styles.upgradeButtonTextSmall}>Upgrade</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const handleResetProgress = async () => {
+    if (!user || (!exam && mode !== 'weakest_subject')) return; // Allow reset for weakest_subject if needed or handle general reset
+
+    Alert.alert(
+      "Reset Progress",
+      "This will reset your question history for this exam, allowing you to see all questions again. This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            // Handle modes that might not have exam.id appropriately, but mainly for exam modes
+            if (!exam?.id) {
+              // Fallback or specific logic for non-exam modes if any
+              return;
+            }
+
+            setLoading(true);
+            try {
+              // Get all session IDs for this user and exam to delete relationships
+              const { data: sessions, error: sessionError } = await supabase
+                .from('quiz_sessions')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('exam_id', exam.id);
+
+              if (sessionError) throw sessionError;
+
+              const sessionIds = (sessions || []).map(s => s.id);
+
+              if (sessionIds.length > 0) {
+                // Delete user_answers
+                const { error: ansError } = await supabase
+                  .from('user_answers')
+                  .delete()
+                  .in('quiz_session_id', sessionIds);
+                if (ansError) throw ansError;
+
+                // Delete quiz_sessions
+                const { error: delError } = await supabase
+                  .from('quiz_sessions')
+                  .delete()
+                  .in('id', sessionIds);
+                if (delError) throw delError;
+              }
+
+              Alert.alert("Success", "Progress reset successfully.");
+              fetchQuestions();
+            } catch (err) {
+              console.error("Error resetting progress:", err);
+              Alert.alert("Error", "Failed to reset progress.");
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   // --- Custom Quiz Modal ---
   if (mode === 'custom' && showBuildQuizModal && !buildQuizStarted) {
+    // Filter domains based on search text
+    const filteredAvailableDomains = availableDomains.filter(d =>
+      d.toLowerCase().includes(domainSearchText.toLowerCase())
+    );
+
     return (
-      <LinearGradient colors={['#0F172A', '#1E293B']} style={[styles.container, {justifyContent:'center',alignItems:'center'}]}>
-        <SafeAreaView style={[styles.safeArea, {justifyContent:'center',alignItems:'center',paddingTop:vs(10), width: '100%',paddingBottom: insets.bottom + vs(2),}]}>
+      <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={styles.safeArea}>
+          <View style={styles.buildQuizHeader}>
+            <TouchableOpacity
+              onPress={() => router.back()}
+              style={styles.backButton}
+              activeOpacity={0.7}
+            >
+              <ArrowLeft size={24} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.buildQuizTitle}>Custom Quiz</Text>
+            <View style={{ width: 40 }} />
+          </View>
+
           <KeyboardAvoidingView
-        style={{ flex: 1, width: '100%' }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
-      >
-        <ScrollView
-          style={styles.centeredModalWrapper}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center' }}
-        >
-            <Text style={styles.modalTitleStrong}>Build Your Own Quiz</Text>
-            <View style={styles.modalContainerCompact}>
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+          >
+            <ScrollView
+              style={styles.buildQuizScroll}
+              contentContainerStyle={styles.buildQuizContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* 1. Domain Selection */}
+              <View style={styles.sectionContainer}>
+                <Text style={styles.sectionLabel}>Select Domains</Text>
+                <Text style={styles.sectionSubLabel}>Choose topics to include in your quiz</Text>
 
-            {/* Domain Selection - Multi-Select Dropdown */}
-            <Text style={styles.modalLabel}>Select Domains</Text>
-            <SectionedMultiSelect
-              items={availableDomains.map(domain => ({ id: domain, name: domain }))}
-              IconRenderer={(props: any) => <Icon {...props} /> as any}
-              uniqueKey="id"
-              onSelectedItemsChange={setSelectedDomains}
-              selectedItems={selectedDomains}
-              selectText="Choose domains..."
-              searchPlaceholderText="Search domains..."
-              confirmText="Confirm"
-              colors={{ primary: '#F59E0B', success: '#10B981', text: '#F8FAFC', chipColor: '#F59E0B', selectToggleTextColor: '#F8FAFC', searchPlaceholderTextColor: '#94A3B8' }}
-              styles={{
-                selectToggle: { backgroundColor: '#334155', borderColor: '#F59E0B', marginBottom: vs(10), borderRadius: 8, padding: 12 },
-                chipsWrapper: { backgroundColor: '#1E293B', padding: 15, borderRadius: 8, },
-                itemText: { color: 'black' },
-                selectedItemText: { color: '#F59E0B', fontWeight: 'bold' },
-              }}
-              disabled={availableDomains.length === 0}
-            />
-
-
-
-            {/* Difficulty Selection */}
-            <Text style={styles.modalLabel}>Select Difficulty (optional)</Text>
-            <View style={styles.optionRow}>
-              {['easy', 'medium', 'hard'].map((diff) => (
-                <TouchableOpacity
-                  key={diff}
-                  style={[
-                    styles.optionButton,
-                    (Array.isArray(buildQuizDifficulty) ? buildQuizDifficulty.includes(diff) : buildQuizDifficulty === diff) && styles.optionButtonSelected,
-                  ]}
-                  onPress={() => {
-                    setBuildQuizDifficulty((prev) => {
-                      if (!Array.isArray(prev)) return [diff];
-                      return prev.includes(diff)
-                        ? prev.filter((d) => d !== diff)
-                        : [...prev, diff];
-                    });
-                  }}
-                >
-                  <Text style={styles.optionButtonText}>{diff.charAt(0).toUpperCase() + diff.slice(1)}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Number of Questions - free input */}
-            <Text style={styles.modalLabel}>Number of Questions (MAX 50)</Text>
-            <View style={styles.inputRow}>
-              <Text style={styles.inputLabel}>Questions:</Text>
-              <TextInput
-                style={styles.inputBox}
-                keyboardType="numeric"
-                value={buildQuizNumQuestions.toString()}
-                onChangeText={(val) => {
-                  const v = parseInt(val.replace(/[^0-9]/g, ''), 10);
-                  if (!isNaN(v)) {
-                    if (v <= 50) {
-                      setBuildQuizNumQuestions(v);
-                    } else {
-                      setBuildQuizNumQuestions(50);
-                    }
-                  } else {
-                    setBuildQuizNumQuestions(0);
-                  }
-                }}
-                placeholder="e.g. 10"
-                maxLength={3}
-              />
-            </View>
-
-
-            {/* Time Limit Toggle */}
-            <View style={{ flexDirection: 'row', alignItems: 'stretch', marginBottom: 12 }}>
-              <Text style={styles.modalLabel}>Enable Time Limit (minutes)</Text>
-              <Switch
-                style={{ marginLeft: 12 }}
-                value={isTimedQuiz}
-                onValueChange={setIsTimedQuiz}
-                trackColor={{ false: '#64748B', true: '#10B981' }}
-                thumbColor={isTimedQuiz ? '#F8FAFC' : '#CBD5E1'}
-                accessibilityLabel="Enable Time Limit"
-              />
-            </View>
-            {/* Time Limit - free input (only show if timed) */}
-            {isTimedQuiz && (
-              <>
-                {/* <Text style={styles.modalLabel}>Time Limit (minutes)</Text> */}
-                <View style={styles.inputRow}>
-                  <Text style={styles.inputLabel}>Minutes:</Text>
+                <View style={styles.searchContainer}>
+                  <Icon name="search" size={20} color="#94A3B8" style={{ marginRight: 8 }} />
                   <TextInput
-                    style={styles.inputBox}
-                    keyboardType="numeric"
-                    value={Math.floor(buildQuizTime / 60).toString()}
-                    onChangeText={(val) => {
-                      const v = parseInt(val.replace(/[^0-9]/g, ''), 10);
-                      setBuildQuizTime(isNaN(v) ? 0 * 60 : v * 60);
+                    style={styles.searchInput}
+                    placeholder="Search domains..."
+                    placeholderTextColor="#64748B"
+                    value={domainSearchText}
+                    onChangeText={setDomainSearchText}
+                  />
+                  {domainSearchText.length > 0 && (
+                    <TouchableOpacity onPress={() => setDomainSearchText('')}>
+                      <Icon name="close" size={20} color="#94A3B8" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Scrollable Chip Container with fixed height for UX */}
+                <View style={{ height: vs(240), backgroundColor: colors.inputBg, borderRadius: 12, borderWidth: 1, borderColor: colors.border }}>
+                  <ScrollView
+                    nestedScrollEnabled={true}
+                    showsVerticalScrollIndicator={true}
+                    contentContainerStyle={{ padding: 12 }}
+                    keyboardShouldPersistTaps="handled"
+                    persistentScrollbar={true} // Android
+                  >
+                    <View style={styles.chipContainer}>
+                      {filteredAvailableDomains.length > 0 ? (
+                        filteredAvailableDomains.map(domain => {
+                          const isSelected = selectedDomains.includes(domain);
+                          return (
+                            <TouchableOpacity
+                              key={domain}
+                              style={[
+                                styles.domainChip,
+                                isSelected && styles.domainChipSelected
+                              ]}
+                              onPress={() => {
+                                setSelectedDomains(prev =>
+                                  prev.includes(domain)
+                                    ? prev.filter(d => d !== domain)
+                                    : [...prev, domain]
+                                );
+                              }}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={[
+                                styles.domainChipText,
+                                isSelected && styles.domainChipTextSelected
+                              ]}>
+                                {domain}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })
+                      ) : (
+                        <Text style={styles.emptyText}>No topics found.</Text>
+                      )}
+                    </View>
+                  </ScrollView>
+                </View>
+              </View>
+
+              {/* 2. Difficulty */}
+              <View style={styles.sectionContainer}>
+                <Text style={styles.sectionLabel}>Difficulty Level</Text>
+                <View style={styles.difficultyRow}>
+                  {['easy', 'medium', 'hard'].map((diff) => {
+                    const isSelected = Array.isArray(buildQuizDifficulty)
+                      ? buildQuizDifficulty.includes(diff)
+                      : buildQuizDifficulty === diff;
+
+                    let diffColor = '#10B981'; // Easy
+                    if (diff === 'medium') diffColor = '#F59E0B';
+                    if (diff === 'hard') diffColor = '#EF4444';
+
+                    return (
+                      <TouchableOpacity
+                        key={diff}
+                        style={[
+                          styles.difficultyCard,
+                          isSelected && { borderColor: diffColor, backgroundColor: `${diffColor}15` }
+                        ]}
+                        onPress={() => {
+                          setBuildQuizDifficulty(prev => {
+                            if (!Array.isArray(prev)) return [diff];
+                            return prev.includes(diff)
+                              ? prev.filter(d => d !== diff)
+                              : [...prev, diff];
+                          });
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[
+                          styles.difficultyOptionText,
+                          { color: isSelected ? diffColor : '#94A3B8' }
+                        ]}>
+                          {diff.charAt(0).toUpperCase() + diff.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* 3. Question Count */}
+              <View style={styles.sectionContainer}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionLabel}>Number of Questions</Text>
+                  <Text style={styles.highlightValue}>{buildQuizNumQuestions}</Text>
+                </View>
+
+                <View style={styles.stepperContainer}>
+                  <TouchableOpacity
+                    style={styles.stepperButton}
+                    onPress={() => setBuildQuizNumQuestions(Math.max(5, buildQuizNumQuestions - 5))}
+                  >
+                    <Icon name="remove" size={24} color={colors.text} />
+                  </TouchableOpacity>
+
+                  <View style={styles.stepperValueContainer}>
+                    <Text style={styles.stepperValue}>{buildQuizNumQuestions}</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.stepperButton}
+                    onPress={() => setBuildQuizNumQuestions(Math.min(50, buildQuizNumQuestions + 5))}
+                  >
+                    <Icon name="add" size={24} color={colors.text} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.helperText}>Max 50 questions</Text>
+              </View>
+
+              {/* 4. Timer Settings */}
+              <View style={styles.sectionContainer}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionLabel}>Timed Quiz</Text>
+                  <Switch
+                    trackColor={{ false: '#334155', true: '#F59E0B' }}
+                    thumbColor={'#F8FAFC'}
+                    onValueChange={(val) => {
+                      setIsTimedQuiz(val);
+                      if (!val) setCustomTimeMode(false); // Reset custom mode if disabled
                     }}
-                    placeholder="e.g. 10"
-                    maxLength={5}
+                    value={isTimedQuiz}
                   />
                 </View>
-              </>
-            )}
 
+                {isTimedQuiz && (
+                  <View>
+                    <View style={styles.timePresetsContainer}>
+                      {[10, 20, 30, 60].map(mins => {
+                        const seconds = mins * 60;
+                        const isSelected = !customTimeMode && buildQuizTime === seconds;
+                        return (
+                          <TouchableOpacity
+                            key={mins}
+                            style={[
+                              styles.timePresetChip,
+                              isSelected && styles.timePresetChipSelected
+                            ]}
+                            onPress={() => {
+                              setCustomTimeMode(false);
+                              setBuildQuizTime(seconds);
+                            }}
+                          >
+                            <Clock size={14} color={isSelected ? '#0F172A' : '#94A3B8'} />
+                            <Text style={[
+                              styles.timePresetText,
+                              isSelected && styles.timePresetTextSelected
+                            ]}>
+                              {mins}m
+                            </Text>
+                          </TouchableOpacity>
+                        )
+                      })}
 
-            {/* Start Quiz Button */}
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                (selectedDomains.length === 0) && styles.actionButtonDisabled,
-              ]}
-              onPress={handleStartBuildQuiz}
-              disabled={selectedDomains.length === 0}
-            >
-              <Text style={styles.actionButtonText}>Start Quiz</Text>
-            </TouchableOpacity>
-          </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+                      {/* Custom Time Chip */}
+                      <TouchableOpacity
+                        style={[
+                          styles.timePresetChip,
+                          customTimeMode && styles.timePresetChipSelected
+                        ]}
+                        onPress={() => {
+                          setCustomTimeMode(true);
+                        }}
+                      >
+                        <Edit size={14} color={customTimeMode ? '#0F172A' : '#94A3B8'} />
+                        <Text style={[
+                          styles.timePresetText,
+                          customTimeMode && styles.timePresetTextSelected
+                        ]}>
+                          Custom
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Custom Time Input */}
+                    {customTimeMode && (
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={{ color: '#94A3B8', marginBottom: 6, fontSize: ms(12) }}>Enter time in minutes:</Text>
+                        <TextInput
+                          style={styles.inputBox}
+                          keyboardType="numeric"
+                          value={Math.floor(buildQuizTime / 60).toString()}
+                          onChangeText={(val) => {
+                            const v = parseInt(val.replace(/[^0-9]/g, ''), 10);
+                            setBuildQuizTime(isNaN(v) ? 0 : v * 60);
+                          }}
+                          placeholder="e.g. 45"
+                          placeholderTextColor="#64748B"
+                          maxLength={3}
+                          returnKeyType="done"
+                        />
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              <View style={{ height: 100 }} />
+            </ScrollView>
+
+            {/* Sticky Start Button */}
+            <View style={styles.footerAction}>
+              <TouchableOpacity
+                style={styles.startQuizButtonLarge}
+                onPress={handleStartBuildQuiz}
+                activeOpacity={0.8}
+              >
+                <LinearGradient
+                  colors={['#F59E0B', '#D97706']}
+                  style={styles.startQuizGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <Text style={styles.startQuizTextLarge}>Start Quiz</Text>
+                  <Icon name="arrow-forward" size={24} color="#0F172A" />
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
       </LinearGradient>
     );
   }
 
   if (loading) {
     return (
-      <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-        <SafeAreaView style={styles.safeArea}>
+      <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={[styles.safeArea, { paddingBottom: insets.bottom + 20 }]}>
           <View style={styles.loadingContainer}>
             <Text style={styles.loadingText}>Loading quiz...</Text>
           </View>
-        </SafeAreaView>
+        </View>
       </LinearGradient>
     );
   }
 
   if (questions.length === 0) {
     return (
-      <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-        <SafeAreaView style={styles.safeArea}>
+      <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
           <View style={styles.header}>
-            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-              <ArrowLeft size={24} color="#F8FAFC" strokeWidth={2} />
+            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+              <ArrowLeft color={colors.text} size={24} />
             </TouchableOpacity>
-            <Text style={styles.title}>Quiz</Text>
+            <View style={{ flex: 1, alignItems: 'center' }}>
+              <Text style={styles.headerTitle}>{getQuizTitle()}</Text>
+            </View>
+            <View style={{ width: 40 }} />
           </View>
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No questions available</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={fetchQuestions}>
-              <RotateCcw size={20} color="#F8FAFC" strokeWidth={2} />
-              <Text style={styles.retryText}>Try Again</Text>
+
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: hs(24), paddingBottom: vs(40) }}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={{ marginBottom: vs(24), position: 'relative', marginTop: vs(20) }}>
+              <BookOpen size={ms(64)} color={colors.primary} strokeWidth={1.5} />
+              <View style={{ position: 'absolute', bottom: -5, right: -5, backgroundColor: colors.background, borderRadius: 50, padding: 2 }}>
+                <AlertCircle size={ms(24)} color="#EF4444" fill={colors.background} />
+              </View>
+            </View>
+
+            <Text style={[styles.noQuestionsText, { color: colors.text, marginBottom: vs(8) }]}>No Questions Available</Text>
+            <Text style={[styles.noQuestionsSubText, { color: colors.subText, marginBottom: vs(32) }]}>
+              {mode === 'missed'
+                ? "You haven't answered any questions incorrectly yet!"
+                : "You've answered all available questions for this mode."}
+            </Text>
+
+            {/* Reset Option */}
+            {mode !== 'missed' && (
+              <TouchableOpacity
+                style={{
+                  width: '100%',
+                  paddingVertical: vs(14),
+                  paddingHorizontal: hs(20),
+                  borderRadius: ms(12),
+                  borderWidth: 1,
+                  borderColor: colors.primary,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: hs(8),
+                  backgroundColor: 'transparent',
+                  marginBottom: vs(24)
+                }}
+                onPress={handleResetProgress}
+              >
+                <RefreshCcw size={ms(20)} color={colors.primary} />
+                <Text style={{ color: colors.primary, fontSize: ms(16), fontWeight: '600' }}>Reset Exam Progress</Text>
+              </TouchableOpacity>
+            )}
+
+            {!isPremium && (
+              <View style={{
+                width: '100%',
+                backgroundColor: colors.card,
+                borderRadius: ms(16),
+                padding: hs(20),
+                alignItems: 'center',
+                borderWidth: 1,
+                borderColor: colors.border,
+                marginBottom: vs(24),
+                // Premium gold tint
+                shadowColor: "#FFD700",
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.05,
+                shadowRadius: 8,
+                elevation: 2,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: vs(8), gap: hs(8) }}>
+                  <Crown size={ms(20)} color="#FFD700" fill="#FFD700" />
+                  <Text style={{ fontSize: ms(16), fontWeight: '700', color: colors.text }}>Go Premium</Text>
+                </View>
+                <Text style={{ fontSize: ms(14), color: colors.subText, textAlign: 'center', lineHeight: ms(20), marginBottom: vs(16) }}>
+                  Upgrade to unlock unlimited questions and practice without limits.
+                </Text>
+
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#FFD700',
+                    width: '100%',
+                    paddingVertical: vs(12),
+                    borderRadius: ms(10),
+                    alignItems: 'center',
+                  }}
+                  onPress={() => router.push('/subscription')}
+                >
+                  <Text style={{ color: '#0F172A', fontWeight: '700', fontSize: ms(14), textTransform: 'uppercase' }}>Unlock Now</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: hs(8), padding: hs(12) }}
+              onPress={fetchQuestions}
+            >
+              <RotateCcw size={ms(18)} color={colors.subText} />
+              <Text style={{ fontSize: ms(16), color: colors.subText, fontWeight: '600' }}>Try Again</Text>
             </TouchableOpacity>
-          </View>
-        </SafeAreaView>
+
+          </ScrollView>
+        </View>
       </LinearGradient>
     );
   }
@@ -862,12 +1175,12 @@ export default function QuizScreen() {
   const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
 
   return (
-    <LinearGradient colors={['#0F172A', '#1E293B']} style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
+    <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.safeArea, { paddingBottom: insets.bottom + 20 }]}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <ArrowLeft size={24} color="#F8FAFC" strokeWidth={2} />
+            <ArrowLeft size={24} color={colors.text} strokeWidth={2} />
           </TouchableOpacity>
           <Text style={styles.title}>{getQuizTitle()}</Text>
           {timeLeft !== null && (
@@ -877,6 +1190,8 @@ export default function QuizScreen() {
             </View>
           )}
         </View>
+
+        {renderPremiumBanner()}
 
         {/* Progress Bar */}
         <View style={styles.progressContainer}>
@@ -892,10 +1207,19 @@ export default function QuizScreen() {
           {/* Question */}
           <View style={styles.questionContainer}>
             <View style={styles.questionHeader}>
-              {/* <View style={styles.questionMeta}>
+              <View style={styles.questionMeta}>
+                {/* Use !! to force a boolean check, or check for true explicitly */}
+                {currentQuestion.is_premium === true && (
+                  <View style={styles.premiumBadge}>
+                    <Icon name="star" size={12} color="#0F172A" />
+                    <Text style={styles.premiumBadgeText}>PREMIUM</Text>
+                  </View>
+                )}
+                {/* 
                 <Text style={styles.difficultyText}>{currentQuestion.difficulty}</Text>
                 <Text style={styles.domainText}>{currentQuestion.domain}</Text>
-              </View> */}
+                */}
+              </View>
             </View>
             <Text style={styles.questionText}>{currentQuestion.question_text}</Text>
           </View>
@@ -938,7 +1262,7 @@ export default function QuizScreen() {
         </ScrollView>
 
         {/* Action Button */}
-        <View style={[styles.actionContainer, { paddingBottom: insets.bottom || vs(30) }]}>
+        <View style={[styles.actionContainer, { paddingBottom: Math.max(insets.bottom, 20) + vs(10) }]}>
           {!showResult ? (
             <TouchableOpacity
               style={[styles.actionButton, !selectedAnswer && styles.actionButtonDisabled]}
@@ -955,17 +1279,16 @@ export default function QuizScreen() {
             </TouchableOpacity>
           )}
         </View>
-      </SafeAreaView>
+      </View>
     </LinearGradient>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   centeredModalWrapper: {
     width: '96%',
     maxWidth: 420,
     alignSelf: 'center',
-    // backgroundColor: 'rgba(30,41,59,0.98)',
     padding: hs(16),
     marginTop: vs(36),
     marginBottom: vs(10),
@@ -980,30 +1303,28 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     justifyContent: 'center',
     paddingBottom: vs(16),
-
   },
   modalTitleStrong: {
     fontSize: ms(20),
     fontWeight: 'bold',
-    color: '#F8FAFC',
+    color: colors.text,
     marginBottom: vs(16),
     textAlign: 'center',
   },
-  // --- Custom Modal Styles ---
   modalContentContainer: {
     alignItems: 'stretch',
     justifyContent: 'center',
   },
   subjectSearchBox: {
-    backgroundColor: '#1E293B',
-    color: '#F8FAFC',
+    backgroundColor: colors.card,
+    color: colors.text,
     borderRadius: ms(8),
     paddingVertical: vs(6),
     paddingHorizontal: hs(12),
     fontSize: ms(15),
     marginBottom: vs(8),
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: colors.border,
   },
   subjectListItem: {
     flexDirection: 'row',
@@ -1013,24 +1334,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: hs(12),
     borderRadius: ms(8),
     marginBottom: vs(4),
-    backgroundColor: '#334155',
+    backgroundColor: colors.inputBg,
   },
   subjectListItemSelected: {
-    backgroundColor: '#0EA5E9',
+    backgroundColor: colors.secondary, // was 0EA5E9
   },
   subjectListItemText: {
-    color: '#F8FAFC',
+    color: colors.text,
     fontSize: ms(15),
     flex: 1,
   },
   subjectListItemCheck: {
-    color: '#22D3EE',
+    color: colors.secondary, // was 22D3EE
     fontWeight: 'bold',
     fontSize: ms(16),
     marginLeft: hs(8),
   },
   selectedCountText: {
-    color: '#38BDF8',
+    color: colors.secondary, // was 38BDF8
     fontSize: ms(13),
     marginTop: vs(4),
     textAlign: 'right',
@@ -1042,46 +1363,40 @@ const styles = StyleSheet.create({
     marginBottom: vs(10),
   },
   inputLabel: {
-    color: '#F8FAFC',
+    color: colors.text,
     fontWeight: '600',
     fontSize: ms(14),
     marginRight: hs(8),
   },
   inputBox: {
-    backgroundColor: '#334155',
-    color: '#F8FAFC',
+    backgroundColor: colors.inputBg,
+    color: colors.text,
     borderRadius: ms(8),
     paddingVertical: vs(6),
     paddingHorizontal: hs(12),
     fontSize: ms(15),
     minWidth: hs(60),
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.border,
+    padding: 12, // merged from second definition
   },
   modalContainer: {
-    flex:1,
+    flex: 1,
     padding: hs(20),
-    // backgroundColor: '#1E293B',
     borderRadius: ms(16),
-    gap:hs(15),
-    // shadowColor: '#000',
-    // shadowOffset: { width: 0, height: 2 },
-    // shadowOpacity: 0.2,
-    // shadowRadius: 4,
-    // elevation: 5,
-    // paddingBottom: vs(36),
+    gap: hs(15),
     alignItems: 'stretch',
     justifyContent: 'center',
   },
   modalTitle: {
-    color: '#F8FAFC',
+    color: colors.text,
     fontSize: ms(22),
     fontWeight: '700',
     marginBottom: vs(16),
     textAlign: 'center',
   },
   modalLabel: {
-    color: '#F59E0B',
+    color: colors.primary,
     fontSize: ms(15),
     fontWeight: '600',
     marginTop: vs(12),
@@ -1094,21 +1409,21 @@ const styles = StyleSheet.create({
     marginBottom: vs(10),
   },
   subjectButton: {
-    backgroundColor: '#334155',
+    backgroundColor: colors.inputBg,
     borderRadius: ms(8),
     paddingVertical: vs(6),
     paddingHorizontal: hs(14),
     marginRight: hs(8),
     marginBottom: vs(8),
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: colors.border,
   },
   subjectButtonSelected: {
-    backgroundColor: '#F59E0B',
-    borderColor: '#F59E0B',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   subjectButtonText: {
-    color: '#F8FAFC',
+    color: '#FFF', // Always white on primary
     fontWeight: '600',
   },
   optionRow: {
@@ -1116,64 +1431,146 @@ const styles = StyleSheet.create({
     gap: hs(12),
     marginBottom: vs(10),
   },
-  optionButton: {
-    backgroundColor: '#334155',
+  modalOptionButton: {
+    backgroundColor: colors.inputBg,
     borderRadius: ms(8),
     paddingVertical: vs(6),
     paddingHorizontal: hs(16),
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: colors.border,
   },
   optionButtonSelected: {
-    backgroundColor: '#F59E0B',
-    borderColor: '#F59E0B',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   optionButtonText: {
-    color: '#F8FAFC',
+    color: '#FFF',
     fontWeight: '600',
     fontSize: ms(15),
   },
-// Use responsive units for all values below
-
   container: {
     flex: 1,
   },
   safeArea: {
     flex: 1,
     paddingTop: vs(30),
-
   },
-  loadingContainer: {
-    flex: 1,
+  centered: {
     justifyContent: 'center',
     alignItems: 'center',
+    flex: 1,
+    paddingHorizontal: hs(20),
   },
-  loadingText: {
+  noQuestionsText: {
+    fontSize: ms(20),
+    fontWeight: 'bold',
+    color: colors.text,
+    textAlign: 'center',
+  },
+  noQuestionsSubText: {
     fontSize: ms(16),
-    color: '#F8FAFC',
+    color: colors.subText,
+    marginTop: vs(8),
+    textAlign: 'center',
   },
-  emptyContainer: {
-    flex: 1,
+  noContentCard: {
+    backgroundColor: colors.card,
+    borderRadius: ms(24),
+    padding: hs(32),
+    alignItems: 'center',
+    width: '90%',
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  noContentIconContainer: {
+    width: ms(80),
+    height: ms(80),
+    backgroundColor: colors.inputBg,
+    borderRadius: ms(40),
     justifyContent: 'center',
     alignItems: 'center',
-    padding: hs(20),
+    marginBottom: vs(24),
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  emptyText: {
-    fontSize: ms(18),
-    color: '#94A3B8',
-    marginBottom: vs(20),
+  noContentIconBadge: {
+    position: 'absolute',
+    bottom: -4,
+    right: -4,
+    backgroundColor: colors.card,
+    borderRadius: 12,
   },
-  retryButton: {
+  skipButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#334155',
-    padding: hs(12),
-    borderRadius: ms(8),
+    backgroundColor: colors.primary,
+    paddingVertical: vs(16),
+    paddingHorizontal: hs(24),
+    borderRadius: ms(16),
     gap: hs(8),
+    marginTop: vs(20),
   },
-  retryText: {
-    color: '#F8FAFC',
-    fontWeight: '600',
+  skipButtonText: {
+    color: '#0F172A',
+    fontSize: ms(16),
+    fontWeight: '700',
+  },
+  inlinePremiumCard: {
+    marginTop: vs(24),
+    width: '100%',
+    backgroundColor: 'rgba(255, 215, 0, 0.05)',
+    borderRadius: ms(16),
+    padding: hs(16),
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.3)',
+  },
+  premiumHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: hs(8),
+    marginBottom: vs(8),
+  },
+  premiumHeaderText: {
+    color: '#FFD700',
+    fontWeight: '700',
+    fontSize: ms(16),
+  },
+  premiumDescText: {
+    color: colors.subText,
+    fontSize: ms(13),
+    textAlign: 'center',
+    marginBottom: vs(16),
+    lineHeight: ms(20),
+  },
+  upgradeButton: {
+    backgroundColor: '#FFD700',
+    paddingVertical: vs(12),
+    borderRadius: ms(12),
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#FFD700',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  upgradeButtonText: {
+    color: '#0F172A',
+    fontWeight: '700',
+    fontSize: ms(14),
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  skipButtonSecondary: {
+    backgroundColor: 'transparent',
+    marginTop: vs(10),
+    paddingVertical: vs(12),
   },
   header: {
     flexDirection: 'row',
@@ -1181,7 +1578,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: hs(20),
     paddingVertical: vs(16),
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#334155',
+    borderBottomColor: colors.border,
   },
   backButton: {
     marginRight: hs(16),
@@ -1190,12 +1587,12 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: ms(20),
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.text,
   },
   timerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: colors.card,
     paddingHorizontal: hs(12),
     paddingVertical: vs(6),
     borderRadius: ms(8),
@@ -1204,7 +1601,7 @@ const styles = StyleSheet.create({
   timerText: {
     fontSize: ms(14),
     fontWeight: '600',
-    color: '#F59E0B',
+    color: colors.primary,
   },
   progressContainer: {
     paddingHorizontal: hs(20),
@@ -1212,18 +1609,18 @@ const styles = StyleSheet.create({
   },
   progressBar: {
     height: vs(4),
-    backgroundColor: '#334155',
+    backgroundColor: colors.border,
     borderRadius: ms(2),
     marginBottom: vs(8),
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#F59E0B',
+    backgroundColor: colors.primary,
     borderRadius: ms(2),
   },
   progressText: {
     fontSize: ms(14),
-    color: '#94A3B8',
+    color: colors.subText,
     textAlign: 'center',
   },
   scrollView: {
@@ -1243,23 +1640,23 @@ const styles = StyleSheet.create({
   difficultyText: {
     fontSize: ms(12),
     fontWeight: '600',
-    color: '#F59E0B',
-    backgroundColor: '#1E293B',
+    color: colors.primary,
+    backgroundColor: colors.card,
     paddingHorizontal: hs(8),
     paddingVertical: vs(4),
     borderRadius: ms(6),
   },
   domainText: {
     fontSize: ms(12),
-    color: '#94A3B8',
-    backgroundColor: '#334155',
+    color: colors.subText,
+    backgroundColor: colors.inputBg,
     paddingHorizontal: hs(8),
     paddingVertical: vs(4),
     borderRadius: ms(6),
   },
   questionText: {
     fontSize: ms(18),
-    color: '#F8FAFC',
+    color: colors.text,
     lineHeight: ms(26),
   },
   optionsContainer: {
@@ -1267,26 +1664,26 @@ const styles = StyleSheet.create({
     marginBottom: vs(24),
   },
   optionButton: {
-    backgroundColor: '#334155',
+    backgroundColor: colors.inputBg,
     borderRadius: ms(12),
     padding: hs(16),
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#475569',
+    borderColor: colors.border,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
   selectedOption: {
-    borderColor: '#F59E0B',
-    backgroundColor: '#1E293B',
+    borderColor: colors.primary,
+    backgroundColor: colors.card,
   },
   correctOption: {
     borderColor: '#10B981',
-    backgroundColor: '#064E3B',
+    backgroundColor: 'rgba(16, 185, 129, 0.2)', // translucent green
   },
   incorrectOption: {
     borderColor: '#EF4444',
-    backgroundColor: '#7F1D1D',
+    backgroundColor: 'rgba(239, 68, 68, 0.2)', // translucent red
   },
   optionContent: {
     flexDirection: 'row',
@@ -1296,17 +1693,17 @@ const styles = StyleSheet.create({
   optionLetter: {
     fontSize: ms(16),
     fontWeight: '700',
-    color: '#F59E0B',
+    color: colors.primary,
     marginRight: hs(12),
     minWidth: hs(20),
   },
   optionText: {
     fontSize: ms(16),
-    color: '#F8FAFC',
+    color: colors.text,
     flex: 1,
   },
   explanationContainer: {
-    backgroundColor: '#1E293B',
+    backgroundColor: colors.card,
     borderRadius: ms(12),
     padding: hs(16),
     marginBottom: vs(24),
@@ -1314,25 +1711,26 @@ const styles = StyleSheet.create({
   explanationTitle: {
     fontSize: ms(16),
     fontWeight: '700',
-    color: '#F8FAFC',
+    color: colors.text,
     marginBottom: vs(8),
   },
   explanationText: {
+    textAlign: 'left',
     fontSize: ms(14),
-    color: '#CBD5E1',
+    color: colors.subText,
     lineHeight: ms(20),
   },
   actionContainer: {
     padding: hs(20),
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#334155',
+    borderTopColor: colors.border,
   },
   actionButton: {
-    backgroundColor: '#F59E0B',
+    backgroundColor: colors.primary,
     padding: hs(16),
     borderRadius: ms(12),
     alignItems: 'center',
-    marginBottom:hs(10)
+    marginBottom: hs(10)
   },
   actionButtonDisabled: {
     opacity: 0.5,
@@ -1340,6 +1738,277 @@ const styles = StyleSheet.create({
   actionButtonText: {
     fontSize: ms(16),
     fontWeight: '600',
+    color: '#0F172A', // Always dark on primary
+  },
+  premiumBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    paddingVertical: vs(8),
+    paddingHorizontal: hs(12),
+    marginHorizontal: hs(16),
+    marginBottom: vs(8),
+    marginTop: vs(8),
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  premiumBannerText: {
+    color: colors.primary,
+    fontSize: ms(12),
+    flex: 1,
+    marginLeft: 8,
+    fontWeight: '500',
+  },
+  upgradeButtonSmall: {
+    backgroundColor: colors.primary,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  upgradeButtonTextSmall: {
     color: '#0F172A',
+    fontSize: ms(10),
+    fontWeight: 'bold',
+  },
+  headerTitle: {
+    fontSize: ms(18),
+    fontWeight: 'bold',
+    color: colors.text,
+  },
+  buildQuizHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: hs(20),
+    paddingVertical: vs(16),
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  buildQuizTitle: {
+    fontSize: ms(20),
+    fontWeight: '700',
+    color: colors.text,
+  },
+  buildQuizScroll: {
+    flex: 1,
+  },
+  buildQuizContent: {
+    padding: hs(20),
+  },
+  sectionContainer: {
+    marginBottom: vs(24),
+  },
+  sectionLabel: {
+    fontSize: ms(16),
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: vs(4),
+  },
+  sectionSubLabel: {
+    fontSize: ms(13),
+    color: colors.subText,
+    marginBottom: vs(12),
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: vs(12),
+  },
+  highlightValue: {
+    fontSize: ms(16),
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  helperText: {
+    fontSize: ms(12),
+    color: colors.subText,
+    marginTop: vs(8),
+    textAlign: 'right',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.inputBg,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: vs(16),
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  searchInput: {
+    flex: 1,
+    color: colors.text,
+    fontSize: ms(14),
+    padding: 0,
+  },
+  chipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  domainChip: {
+    backgroundColor: colors.inputBg,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  domainChipSelected: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)', // Keep accent tint? Or derive from priority.
+    borderColor: colors.primary,
+  },
+  domainChipText: {
+    color: colors.subText,
+    fontSize: ms(13),
+  },
+  domainChipTextSelected: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  difficultyRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  difficultyCard: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: colors.inputBg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  difficultyOptionText: {
+    fontSize: ms(14),
+    fontWeight: '600',
+    color: colors.subText,
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.inputBg,
+    borderRadius: 12,
+    padding: 6,
+  },
+  stepperButton: {
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: 10,
+  },
+  stepperValueContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  stepperValue: {
+    fontSize: ms(20),
+    fontWeight: '700',
+    color: colors.text,
+  },
+  timePresetsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 10,
+  },
+  timePresetChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.inputBg,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  timePresetChipSelected: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderColor: colors.primary,
+  },
+  timePresetText: {
+    color: colors.subText,
+    fontSize: ms(13),
+    fontWeight: '500',
+  },
+  timePresetTextSelected: {
+    color: colors.primary,
+  },
+  footerAction: {
+    padding: hs(20),
+    paddingBottom: vs(34),
+    backgroundColor: colors.background,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  startQuizButtonLarge: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  startQuizGradient: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+    gap: 10,
+  },
+  startQuizTextLarge: {
+    color: '#0F172A',
+    fontSize: ms(18),
+    fontWeight: '700',
+  },
+  premiumBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F59E0B', // Premium Gold
+    paddingHorizontal: hs(8),
+    paddingVertical: vs(4),
+    borderRadius: ms(6),
+    gap: hs(4),
+  },
+  premiumBadgeText: {
+    fontSize: ms(10),
+    fontWeight: '800',
+    color: '#0F172A', // Dark text for contrast
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: ms(16),
+    color: colors.text,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: hs(20),
+  },
+  emptyText: {
+    fontSize: ms(18),
+    color: colors.subText,
+    marginBottom: vs(20),
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.inputBg,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  retryText: {
+    color: colors.text,
+    fontWeight: '600',
   },
 });
