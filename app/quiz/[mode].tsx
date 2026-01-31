@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { MaterialIcons as Icon } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { AlertCircle, ArrowLeft, BookOpen, CheckCircle, Clock, Crown, Edit, RefreshCcw, RotateCcw, X } from 'lucide-react-native';
+import { AlertCircle, BookOpen, CheckCircle, ChevronLeft, Clock, Crown, Edit, RefreshCcw, RotateCcw, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -43,6 +43,7 @@ interface Subject {
 interface Question {
   id: string;
   question_text: string;
+  question_type: string;
   explanation: string;
   difficulty: string;
   domain: string;
@@ -289,6 +290,7 @@ export default function QuizScreen() {
             id,
             question_text,
             explanation,
+            question_type,
             difficulty,
             domain,
             question_options (
@@ -298,7 +300,8 @@ export default function QuizScreen() {
               is_correct
             )
           `)
-          .eq('domain', domain);
+          .eq('domain', domain)
+          .eq('question_type', 'multiple_choice');
 
         if (!isPremium) {
           queryWeakest = queryWeakest.eq('is_premium', false);
@@ -780,7 +783,7 @@ export default function QuizScreen() {
               style={styles.backButton}
               activeOpacity={0.7}
             >
-              <ArrowLeft size={24} color={colors.text} />
+              <ChevronLeft size={24} color={colors.text} />
             </TouchableOpacity>
             <Text style={styles.buildQuizTitle}>Custom Quiz</Text>
             <View style={{ width: 40 }} />
@@ -800,7 +803,7 @@ export default function QuizScreen() {
               {/* 1. Domain Selection */}
               <View style={styles.sectionContainer}>
                 <Text style={styles.sectionLabel}>Select Domains</Text>
-                <Text style={styles.sectionSubLabel}>Choose topics to include in your quiz</Text>
+                <Text style={styles.sectionSubLabel}>Choose domains to include in your quiz</Text>
 
                 <View style={styles.searchContainer}>
                   <Icon name="search" size={20} color="#94A3B8" style={{ marginRight: 8 }} />
@@ -1028,7 +1031,7 @@ export default function QuizScreen() {
             {/* Sticky Start Button */}
             <View style={styles.footerAction}>
               <TouchableOpacity
-                style={styles.startQuizButtonLarge}
+                style={{ ...styles.startQuizButtonLarge, marginBottom: insets.bottom }}
                 onPress={handleStartBuildQuiz}
                 activeOpacity={0.8}
               >
@@ -1039,7 +1042,7 @@ export default function QuizScreen() {
                   end={{ x: 1, y: 0 }}
                 >
                   <Text style={styles.startQuizTextLarge}>Start Quiz</Text>
-                  <Icon name="arrow-forward" size={24} color="#0F172A" />
+                  {/* <Icon name="arrow-forward" size={24} color="#0F172A" /> */}
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -1067,7 +1070,7 @@ export default function QuizScreen() {
         <View style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-              <ArrowLeft color={colors.text} size={24} />
+              <ChevronLeft color={colors.text} size={24} />
             </TouchableOpacity>
             <View style={{ flex: 1, alignItems: 'center' }}>
               <Text style={styles.headerTitle}>{getQuizTitle()}</Text>
@@ -1176,11 +1179,11 @@ export default function QuizScreen() {
 
   return (
     <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={[styles.safeArea, { paddingBottom: insets.bottom + 20 }]}>
+      <View style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-            <ArrowLeft size={24} color={colors.text} strokeWidth={2} />
+            <ChevronLeft size={24} color={colors.text} strokeWidth={2} />
           </TouchableOpacity>
           <Text style={styles.title}>{getQuizTitle()}</Text>
           {timeLeft !== null && (
@@ -1262,7 +1265,7 @@ export default function QuizScreen() {
         </ScrollView>
 
         {/* Action Button */}
-        <View style={[styles.actionContainer, { paddingBottom: Math.max(insets.bottom, 20) + vs(10) }]}>
+        <View style={[styles.actionContainer, { height: 'auto', justifyContent: 'flex-end' }]}>
           {!showResult ? (
             <TouchableOpacity
               style={[styles.actionButton, !selectedAnswer && styles.actionButtonDisabled]}
@@ -1453,7 +1456,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    paddingTop: vs(30),
+    paddingTop: vs(25),
   },
   centered: {
     justifyContent: 'center',
@@ -1581,7 +1584,15 @@ const createStyles = (colors: any) => StyleSheet.create({
     borderBottomColor: colors.border,
   },
   backButton: {
-    marginRight: hs(16),
+    marginRight: hs(26),
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 20,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   title: {
     flex: 1,
@@ -1722,7 +1733,9 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   actionContainer: {
     padding: hs(20),
-    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingBottom: vs(20), // Adjusted for safe area if needed
+    backgroundColor: colors.card, // Match card/background
+    borderTopWidth: 1,
     borderTopColor: colors.border,
   },
   actionButton: {
@@ -1942,8 +1955,10 @@ const createStyles = (colors: any) => StyleSheet.create({
     color: colors.primary,
   },
   footerAction: {
+    justifyContent: 'flex-end',
+    height: 'auto',
     padding: hs(20),
-    paddingBottom: vs(34),
+    paddingBottom: vs(30),
     backgroundColor: colors.background,
     borderTopWidth: 1,
     borderTopColor: colors.border,

@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Dimensions,
-  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -28,7 +27,7 @@ import { useQuizModes } from '@/lib/QuizModes';
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { ChartBar as BarChart, Calendar, ChevronLeft, ChevronRight, Clock, Crown, CreditCard as Edit, Target, TrendingUp, X } from 'lucide-react-native';
+import { ChartBar as BarChart, Calendar, ChevronLeft, ChevronRight, Clock, Crown, CreditCard as Edit, Layers, Target, TrendingUp, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const today = new Date();
 
@@ -39,7 +38,17 @@ const QUIZ_MODES = [
     icon: Calendar,
     subtitle: today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     color: '#3B82F6',
+    order_index: 0,
     isPremium: false,
+  },
+  {
+    id: 'flashcard',
+    title: 'Flashcards',
+    icon: Layers,
+    subtitle: 'Adaptive Learning',
+    color: '#EC4899',
+    order_index: 1,
+    isPremium: true,
   },
   {
     id: 'quick_10',
@@ -47,6 +56,7 @@ const QUIZ_MODES = [
     icon: Target,
     subtitle: 'Short quiz round',
     color: '#8B5CF6',
+    order_index: 2,
     isPremium: false,
   },
   {
@@ -55,6 +65,7 @@ const QUIZ_MODES = [
     icon: Clock,
     subtitle: 'Beat the clock',
     color: '#06B6D4',
+    order_index: 3,
     isPremium: false,
   },
   {
@@ -63,6 +74,7 @@ const QUIZ_MODES = [
     icon: TrendingUp,
     subtitle: 'Progressive difficulty',
     color: '#8B5CF6',
+    order_index: 4,
     isPremium: true,
   },
   {
@@ -71,6 +83,7 @@ const QUIZ_MODES = [
     icon: X,
     subtitle: 'Practice weak areas',
     color: '#EF4444',
+    order_index: 5,
     isPremium: true,
   },
   {
@@ -79,6 +92,7 @@ const QUIZ_MODES = [
     icon: BarChart,
     subtitle: 'Focus on gaps',
     color: '#F97316',
+    order_index: 6,
     isPremium: true,
   },
   {
@@ -87,6 +101,7 @@ const QUIZ_MODES = [
     icon: Edit,
     subtitle: 'Customize your practice',
     color: '#10B981',
+    order_index: 7,
     isPremium: true,
   },
 ];
@@ -99,6 +114,7 @@ function enrichModesFromLocal(fetchedModes: any[]): any[] {
       subtitle: local?.id === 'daily' ? today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : fetched.subtitle,
       icon: local?.icon,
       color: local?.color,
+      order_index: local?.order_index,
       isPremium: fetched.is_premium,
     };
   });
@@ -128,18 +144,13 @@ export default function StudyScreen() {
   } = useQuizModes();
   const quizModes = Array.isArray(rawQuizModes) ? enrichModesFromLocal(rawQuizModes) : [];
   console.log(quizModes)
-  const [showDailyQuestion, setShowDailyQuestion] = useState(false);
+
   const [studiedDays, setStudiedDays] = useState<number[]>([]);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
   });
   const [loadingCalendar, setLoadingCalendar] = useState(false);
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
-  const [showResult, setShowResult] = useState(false);
-  const [dailyQuestion, setDailyQuestion] = useState<any>(null);
-  const [dailyOptions, setDailyOptions] = useState<any[]>([]);
-  const [loadingDaily, setLoadingDaily] = useState(false);
   const [freeProgress, setFreeProgress] = useState({ total: 0, consumed: 0, loading: true });
 
   useEffect(() => {
@@ -294,39 +305,11 @@ export default function StudyScreen() {
       //   return;
       // }
       if (mode.id === 'daily') {
-        setLoadingDaily(true);
-        try {
-          const today = new Date().toISOString().slice(0, 10);
-          const { data: dq, error: dqError } = await supabase
-            .from('daily_questions')
-            .select('id, question_id')
-            .eq('exam', exam.id)
-            .eq('date_assigned', today)
-            .single();
-          if (dqError || !dq) throw dqError || new Error('No daily question');
-          const { data: question, error: qError } = await supabase
-            .from('questions')
-            .select('*')
-            .eq('id', dq.question_id)
-            .single();
-          if (qError || !question) throw qError || new Error('No question');
-          const { data: options, error: oError } = await supabase
-            .from('question_options')
-            .select('*')
-            .eq('question_id', dq.question_id);
-          if (oError || !options) throw oError || new Error('No options');
-          // console.log(question, options);
-          setDailyQuestion(question);
-          setDailyOptions(options);
-          setShowDailyQuestion(true);
-        } catch (err) {
-          Alert.alert('Error', 'No daily question available for today');
-          setShowDailyQuestion(false);
-        } finally {
-          setLoadingDaily(false);
-        }
+        router.push('/quiz/daily');
       } else if (mode.id === 'level_up') {
         router.push('/quiz/levelup');
+      } else if (mode.id === 'flashcard' || mode.id === 'adaptive') {
+        router.push('/flashcards');
       }
       else {
         router.push(`/quiz/${mode.id}`);
@@ -337,65 +320,7 @@ export default function StudyScreen() {
     }
   };
 
-  const handleAnswerSelect = (optionId: string) => {
-    setSelectedAnswer(optionId);
-  };
 
-  const submitAnswer = async () => {
-    if (!selectedAnswer || !dailyQuestion) return;
-    const questionId = dailyQuestion.id;
-    const selectedOption = dailyOptions.find(opt => opt.id === selectedAnswer);
-    const isCorrect = selectedOption?.is_correct ?? false;
-    try {
-      // 1. Create the quiz session
-      const { data: session, error: sessionError } = await supabase
-        .from('quiz_sessions')
-        .insert([
-          {
-            user_id: user?.id,
-            quiz_type: 'daily',
-            score: isCorrect ? 1 : 0,
-            total_questions: 1,
-            time_taken_seconds: 0, // You can set actual time if available
-            exam_id: exam.id,
-            completed_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-          },
-        ])
-        .select()
-        .single();
-      if (sessionError || !session) {
-        Alert.alert('Error', 'Could not create quiz session.');
-        return;
-      }
-      // 2. Insert the user answer referencing the new session
-      const { error: answerError } = await supabase
-        .from('user_answers')
-        .insert([
-          {
-            user_id: user?.id,
-            question_id: questionId,
-            selected_option_id: selectedAnswer,
-            is_correct: isCorrect,
-            answered_at: new Date().toISOString(),
-            quiz_session_id: session.id,
-          },
-        ]);
-      if (answerError) {
-        Alert.alert('Error', 'Could not save your answer.');
-        return;
-      }
-      setShowResult(true);
-    } catch (err) {
-      Alert.alert('Error', 'Unexpected error on submit.');
-    }
-  };
-
-  const closeModal = () => {
-    setShowDailyQuestion(false);
-    setSelectedAnswer(null);
-    setShowResult(false);
-  };
 
   return (
     <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
@@ -541,13 +466,14 @@ export default function StudyScreen() {
               )
             }
 
-            {quizModes?.map((mode: any) => {
+            {quizModes?.sort((a, b) => a.order_index - b.order_index)?.map((mode: any) => {
               const IconComponent = mode.icon;
+
               if (mode.is_active) {
                 return (
                   <TouchableOpacity
                     key={mode.id}
-                    style={styles.quizModeCard}
+                    style={[styles.quizModeCard]}
                     onPress={() => handleQuizMode(mode)}
                   >
                     <View style={styles.quizModeContent}>
@@ -556,7 +482,9 @@ export default function StudyScreen() {
                       </View>
                       <View style={styles.quizModeText}>
                         <Text style={styles.quizModeTitle}>{mode.title}</Text>
-                        <Text style={styles.quizModeSubtitle}>{mode.subtitle}</Text>
+                        <Text style={styles.quizModeSubtitle}>
+                          {mode.subtitle}
+                        </Text>
                       </View>
                       {mode.isPremium && (
                         <View style={styles.premiumBadge}>
@@ -573,101 +501,7 @@ export default function StudyScreen() {
         </ScrollView>
 
         {/* Daily Question Modal */}
-        <Modal
-          visible={showDailyQuestion}
-          animationType="fade"
-          transparent={true}
-          onRequestClose={closeModal}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <View style={{ backgroundColor: 'rgba(245, 158, 11, 0.1)', padding: 8, borderRadius: 10 }}>
-                    <Calendar size={24} color="#F59E0B" strokeWidth={2} />
-                  </View>
-                  <Text style={styles.modalTitle}>Question of the Day</Text>
-                </View>
-                <TouchableOpacity onPress={closeModal} style={{ padding: 4 }}>
-                  <X size={24} color={colors.subText} strokeWidth={2} />
-                </TouchableOpacity>
-              </View>
 
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
-                {loadingDaily ? (
-                  <View style={{ padding: 40, alignItems: 'center' }}>
-                    <SpinnerAnimation color="#F59E0B" />
-                  </View>
-                ) : (
-                  <>
-                    <Text style={styles.questionText}>{dailyQuestion?.question_text}</Text>
-
-                    <View style={styles.optionsContainer}>
-                      {dailyOptions.map((option) => (
-                        <TouchableOpacity
-                          key={option.id}
-                          style={[
-                            styles.optionButton,
-                            selectedAnswer === option.id && styles.selectedOption,
-                            showResult && option.is_correct && styles.correctOption,
-                            showResult && selectedAnswer === option.id && !option.is_correct && styles.incorrectOption,
-                          ]}
-                          onPress={() => handleAnswerSelect(option.id)}
-                          disabled={showResult}
-                        >
-                          <Text style={[
-                            styles.optionText,
-                            selectedAnswer === option.id && { fontWeight: '600', color: colors.primary },
-                            showResult && option.is_correct && { color: '#047857' },
-                            showResult && selectedAnswer === option.id && !option.is_correct && { color: '#B91C1C' }
-                          ]}>{option.option_text}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
-                    {!showResult ? (
-                      <TouchableOpacity
-                        style={[styles.submitButton, !selectedAnswer && styles.submitButtonDisabled]}
-                        onPress={submitAnswer}
-                        disabled={!selectedAnswer}
-                      >
-                        <Text style={styles.submitButtonText}>Submit Answer</Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <View style={styles.resultContainer}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 }}>
-                          {(() => {
-                            if (!selectedAnswer || !dailyOptions.length) return null;
-                            const selected = dailyOptions.find(opt => opt.id === selectedAnswer);
-                            const isCorrect = selected?.is_correct;
-                            return (
-                              <>
-                                <View style={{
-                                  backgroundColor: isCorrect ? '#DEF7EC' : '#FDE8E8',
-                                  padding: 4,
-                                  borderRadius: 20
-                                }}>
-                                  {isCorrect ? <Target size={16} color="#059669" /> : <X size={16} color="#DC2626" />}
-                                </View>
-                                <Text style={[styles.resultText, { color: isCorrect ? '#059669' : '#DC2626', marginBottom: 0 }]}>
-                                  {isCorrect ? 'Correct!' : 'Incorrect'}
-                                </Text>
-                              </>
-                            );
-                          })()}
-                        </View>
-
-                        <Text style={styles.explanationText}>
-                          {dailyQuestion?.explanation || "No explanation provided."}
-                        </Text>
-                      </View>
-                    )}
-                  </>
-                )}
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
       </View>
     </LinearGradient>
   );
@@ -902,121 +736,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     fontWeight: '600',
     color: '#F59E0B',
   },
-  // Modal Styles
-  // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)', // Slightly darker for better focus
-    justifyContent: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 24,
-    maxHeight: '80%',
-    width: '100%',
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 10,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: colors.text,
-    // flex: 1, // Removed to allow specific spacing
-    // marginLeft: 10, // Removed, using gap
-  },
-  questionText: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: colors.text,
-    marginBottom: 24,
-    lineHeight: 26,
-  },
-  optionsContainer: {
-    gap: 12,
-    marginBottom: 24,
-  },
-  optionButton: {
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: colors.inputBg,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  selectedOption: {
-    borderColor: colors.primary,
-    backgroundColor: 'rgba(59, 130, 246, 0.05)',
-  },
-  correctOption: {
-    borderColor: '#10B981',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-  },
-  incorrectOption: {
-    borderColor: '#EF4444',
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-  },
-  optionText: {
-    fontSize: 15,
-    color: colors.text,
-    lineHeight: 22,
-    flex: 1,
-  },
-  submitButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: 16,
-    borderRadius: 16,
-    alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  submitButtonDisabled: {
-    opacity: 0.5,
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  submitButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  resultContainer: {
-    marginTop: 10,
-    padding: 16,
-    backgroundColor: colors.inputBg,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  resultText: {
-    fontSize: 16,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  explanationText: {
-    fontSize: 14,
-    color: colors.subText,
-    lineHeight: 22,
-  },
+
 });
 function SpinnerAnimation({ color = '#F59E0B' }: { color?: string }) {
   const rotation = useSharedValue(0);

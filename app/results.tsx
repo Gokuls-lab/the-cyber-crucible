@@ -5,14 +5,16 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { BarChart, ChevronLeft, Clock, Home, Repeat, Target, Trophy } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Dimensions,
-  SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import ConfettiCannon from 'react-native-confetti-cannon';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -29,6 +31,7 @@ export default function ResultsScreen() {
   const [results, setResults] = useState<any>(null);
   const [exam, setExam] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (!session) {
@@ -70,11 +73,10 @@ export default function ResultsScreen() {
   if (loading || !results) {
     return (
       <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.container}>
-        <SafeAreaView style={styles.safeArea}>
-          <View style={styles.loadingContainer}>
-            <Text style={[styles.loadingText, { color: colors.text }]}>Loading results...</Text>
-          </View>
-        </SafeAreaView>
+        <View style={[styles.loadingContainer, { paddingTop: insets.top }]}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.text, marginTop: 20 }]}>Loading results...</Text>
+        </View>
       </LinearGradient>
     );
   }
@@ -87,7 +89,7 @@ export default function ResultsScreen() {
   return (
     <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={styles.container}>
       {passed && <ConfettiCannon count={200} origin={{ x: -10, y: 0 }} fadeOut={true} />}
-      <SafeAreaView style={styles.safeArea}>
+      <View style={{ flex: 1, paddingTop: insets.top }}>
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <TouchableOpacity
             style={styles.backButton}
@@ -98,78 +100,86 @@ export default function ResultsScreen() {
           <Text style={[styles.title, { color: colors.text }]}>Quiz Results</Text>
         </View>
 
-        <View style={styles.content}>
-          <View style={styles.scoreContainer}>
-            <View style={[styles.trophyContainer, { backgroundColor: passed ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)' }]}>
-              {passed ? <Trophy size={48} color={colors.primary} strokeWidth={1.5} /> : <Target size={48} color="#EF4444" strokeWidth={1.5} />}
-            </View>
-            <Text style={[styles.examTitle, { color: colors.text }]}>
-              {exam?.title || 'Quiz Complete'}
-            </Text>
-            <Text style={[styles.resultSubtitle, { color: colors.subText }]}>
-              {passed ? "Excellent work! Keep it up." : "Good effort. Keep practicing!"}
-            </Text>
-          </View>
-
-          <View style={styles.statsGrid}>
-            <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <View style={[styles.statIcon, { backgroundColor: colors.inputBg }]}>
-                <Target size={24} color={colors.primary} strokeWidth={2} />
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: insets.bottom + 20 }
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.content}>
+            <View style={styles.scoreContainer}>
+              <View style={[styles.trophyContainer, { backgroundColor: passed ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)' }]}>
+                {passed ? <Trophy size={48} color={colors.primary} strokeWidth={1.5} /> : <Target size={48} color="#EF4444" strokeWidth={1.5} />}
               </View>
-              <Text style={[styles.statValue, { color: colors.text }]}>{accuracy}%</Text>
-              <Text style={[styles.statLabel, { color: colors.subText }]}>Accuracy</Text>
+              <Text style={[styles.examTitle, { color: colors.text }]}>
+                {exam?.title || 'Quiz Complete'}
+              </Text>
+              <Text style={[styles.resultSubtitle, { color: colors.subText }]}>
+                {passed ? "Excellent work! Keep it up." : "Good effort. Keep practicing!"}
+              </Text>
             </View>
 
-            <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <View style={[styles.statIcon, { backgroundColor: colors.inputBg }]}>
-                <BarChart size={24} color="#3B82F6" strokeWidth={2} />
+            <View style={styles.statsGrid}>
+              <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.statIcon, { backgroundColor: colors.inputBg }]}>
+                  <Target size={24} color={colors.primary} strokeWidth={2} />
+                </View>
+                <Text style={[styles.statValue, { color: colors.text }]}>{accuracy}%</Text>
+                <Text style={[styles.statLabel, { color: colors.subText }]}>Accuracy</Text>
               </View>
-              <Text style={[styles.statValue, { color: colors.text }]}>{results.score}</Text>
-              <Text style={[styles.statLabel, { color: colors.subText }]}>Score</Text>
-            </View>
 
-            <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <View style={[styles.statIcon, { backgroundColor: colors.inputBg }]}>
-                <Clock size={24} color="#8B5CF6" strokeWidth={2} />
+              <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.statIcon, { backgroundColor: colors.inputBg }]}>
+                  <BarChart size={24} color="#3B82F6" strokeWidth={2} />
+                </View>
+                <Text style={[styles.statValue, { color: colors.text }]}>{results.score}</Text>
+                <Text style={[styles.statLabel, { color: colors.subText }]}>Score</Text>
               </View>
-              <Text style={[styles.statValue, { color: colors.text }]}>{timeInMinutes}m</Text>
-              <Text style={[styles.statLabel, { color: colors.subText }]}>Time</Text>
-            </View>
-          </View>
 
-          <View style={{ width: '100%', gap: vs(12), marginTop: 'auto' }}>
-            {mode === 'level_up' && (
+              <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.statIcon, { backgroundColor: colors.inputBg }]}>
+                  <Clock size={24} color="#8B5CF6" strokeWidth={2} />
+                </View>
+                <Text style={[styles.statValue, { color: colors.text }]}>{timeInMinutes}m</Text>
+                <Text style={[styles.statLabel, { color: colors.subText }]}>Time</Text>
+              </View>
+            </View>
+
+            <View style={{ width: '100%', gap: vs(12), marginTop: 'auto' }}>
+              {mode === 'level_up' && (
+                <TouchableOpacity
+                  style={[styles.button, { backgroundColor: colors.primary }]}
+                  onPress={() => router.replace('/quiz/levelup')}
+                >
+                  <Repeat size={20} color="#0F172A" />
+                  <Text style={styles.buttonText}>Continue Level Up</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
-                style={[styles.button, { backgroundColor: colors.primary }]}
-                onPress={() => router.replace('/quiz/levelup')}
+                style={[styles.button, { backgroundColor: mode === 'level_up' ? 'transparent' : colors.primary, borderWidth: mode === 'level_up' ? 1 : 0, borderColor: colors.border }]}
+                onPress={() => router.replace('/(tabs)')}
               >
-                <Repeat size={20} color="#0F172A" />
-                <Text style={styles.buttonText}>Continue Level Up</Text>
+                <Home size={20} color={mode === 'level_up' ? colors.text : "#0F172A"} />
+                <Text style={[styles.buttonText, mode === 'level_up' && { color: colors.text }]}>Return to Home</Text>
               </TouchableOpacity>
-            )}
+            </View>
 
-            <TouchableOpacity
-              style={[styles.button, { backgroundColor: mode === 'level_up' ? 'transparent' : colors.primary, borderWidth: mode === 'level_up' ? 1 : 0, borderColor: colors.border }]}
-              onPress={() => router.replace('/(tabs)')}
-            >
-              <Home size={20} color={mode === 'level_up' ? colors.text : "#0F172A"} />
-              <Text style={[styles.buttonText, mode === 'level_up' && { color: colors.text }]}>Return to Home</Text>
-            </TouchableOpacity>
           </View>
-
-        </View>
-      </SafeAreaView>
+        </ScrollView>
+      </View>
     </LinearGradient>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  safeArea: {
-    flex: 1,
-    paddingTop: 30,
+  scrollContent: {
+    flexGrow: 1,
   },
   loadingContainer: {
     flex: 1,

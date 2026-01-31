@@ -1,26 +1,19 @@
 {
-  "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk"
-      }
-    },
-    "preview": {
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk"
-      }
-    },
-    "production": {
-      "distribution": "store",
-      "android": {
-        "buildType": "app-bundle"
-      }
+    "build": {
+        "production": {
+            "android": {
+                "buildType": "app-bundle",
+                "gradleCommand": ":app:bundleRelease"
+            }
+        },
+        "preview": {
+            "android": {
+                "buildType": "apk"
+            }
+        },
+        "development": {
+            "developmentClient": true,
+            "distribution": "internal"
+        }
     }
-  },
-  "cli": {
-    "version": ">= 3.0.0"
-  }
 }

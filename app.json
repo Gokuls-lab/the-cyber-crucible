@@ -2,7 +2,7 @@
   "expo": {
     "name": "The Cyber Cruciora",
     "slug": "cyber",
-    "version": "2.1.0",
+    "version": "2.1.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "the-cyber-cruciora",
@@ -18,7 +18,7 @@
         "backgroundColor": "#00000000"
       },
       "package": "com.cyber.cruciora",
-      "versionCode": 8,
+      "versionCode": 14,
       "targetSdkVersion": 35,
       "permissions": [
         "com.android.vending.BILLING"
@@ -31,13 +31,30 @@
     },
     "plugins": [
       "expo-router",
+      "./plugins/withAndroid16KB",
       [
         "expo-build-properties",
         {
           "android": {
+            "androidGradlePluginVersion": "8.3.2",
             "compileSdkVersion": 35,
             "targetSdkVersion": 35,
-            "buildToolsVersion": "35.0.0"
+            "buildToolsVersion": "35.0.0",
+            "ndkVersion": "27.1.12297006",
+            "extraMavenRepos": [
+              "$projectDir/../../node_modules/@react-native/gradle-plugin/repository"
+            ],
+            "extraGradleProps": {
+              "android.bundle.enableUncompressedNativeLibs": "false"
+            },
+            "packagingOptions": {
+              "jniLibs": {
+                "useLegacyPackaging": false
+              }
+            },
+            "manifestPlaceholders": {
+              "android.max_page_size": "16384"
+            }
           }
         }
       ],

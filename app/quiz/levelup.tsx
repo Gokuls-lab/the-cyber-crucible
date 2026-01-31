@@ -7,7 +7,7 @@ import { useQuizModes } from '@/lib/QuizModes';
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { AlertCircle, ArrowLeft, ArrowRight, BookOpen, Crown, RefreshCcw } from 'lucide-react-native';
+import { AlertCircle, ArrowRight, BookOpen, ChevronLeft, Crown, RefreshCcw } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 
@@ -41,6 +41,7 @@ import LottieView from 'lottie-react-native';
 interface Question {
   id: string;
   question_text: string;
+  question_type: string;
   explanation: string;
   difficulty: 'easy' | 'medium' | 'hard';
   domain: string;
@@ -193,7 +194,8 @@ export default function LevelUpQuizScreen() {
       .select('*, options:question_options(*)')
       .eq('difficulty', currentDifficulty)
       .eq('exam', exam?.id)
-      .not('id', 'in', `(${correctQuestionIds.join(',')})`);
+      .not('id', 'in', `(${correctQuestionIds.join(',')})`)
+      .eq('question_type', 'multiple_choice');
 
     const isPremium = isPro;
     if (!isPremium) {
@@ -481,7 +483,7 @@ export default function LevelUpQuizScreen() {
         <View style={[styles.safeArea, { paddingBottom: insets.bottom + 20 }]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-              <ArrowLeft color={colors.text} size={24} />
+              <ChevronLeft color={colors.text} size={24} />
             </TouchableOpacity>
           </View>
           <View style={{ ...styles.centered, flex: 0.9 }}>
@@ -502,7 +504,7 @@ export default function LevelUpQuizScreen() {
         <View style={[styles.safeArea, { paddingBottom: insets.bottom + 20 }]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-              <ArrowLeft color="#fff" />
+              <ChevronLeft color="#fff" />
             </TouchableOpacity>
           </View>
           <View style={styles.centered}>
@@ -532,7 +534,7 @@ export default function LevelUpQuizScreen() {
         <View style={[styles.safeArea, { paddingBottom: insets.bottom + 20 }]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-              <ArrowLeft color={colors.text} size={24} />
+              <ChevronLeft color={colors.text} size={24} />
             </TouchableOpacity>
           </View>
           <View style={styles.centered}>
@@ -700,7 +702,7 @@ export default function LevelUpQuizScreen() {
         <View style={[styles.safeArea, { paddingBottom: insets.bottom }]}>
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-              <ArrowLeft color={colors.text} size={24} />
+              <ChevronLeft color={colors.text} size={24} />
             </TouchableOpacity>
           </View>
 
@@ -776,7 +778,7 @@ export default function LevelUpQuizScreen() {
               onPress={handleNextStage}
             >
               <Text style={{ color: colors.text, fontSize: ms(16), fontWeight: '600' }}>Skip to {STAGES[stageIndex + 1] ? STAGES[stageIndex + 1] : 'Next'} Stage</Text>
-              <ArrowLeft size={ms(20)} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
+              <ChevronLeft size={ms(20)} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -796,7 +798,7 @@ export default function LevelUpQuizScreen() {
       <View style={[styles.safeArea, { paddingBottom: 0 }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <ArrowLeft color={colors.text} size={24} />
+            <ChevronLeft color={colors.text} size={24} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Level Up - {currentStageName.toUpperCase()}</Text>
         </View>
@@ -882,8 +884,8 @@ export default function LevelUpQuizScreen() {
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
               >
-                <Text style={styles.footerButtonText}>Continue</Text>
-                <ArrowLeft size={24} color="#0F172A" style={{ transform: [{ rotate: '180deg' }] }} />
+                <Text style={styles.footerButtonText}>Next</Text>
+                {/* <ChevronLeft size={24} color="#0F172A" style={{ transform: [{ rotate: '180deg' }] }} /> */}
               </LinearGradient>
             </TouchableOpacity>
           )}

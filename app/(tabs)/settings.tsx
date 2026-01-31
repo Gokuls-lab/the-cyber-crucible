@@ -17,6 +17,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { resetAdaptiveProgress } from '@/lib/flashcards';
 import { supabase } from '@/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image as ExpoImage } from 'expo-image';
@@ -187,6 +188,12 @@ export default function SettingsScreen() {
                 exam_id: exam.id,
                 new_stage: 0,
               });
+
+
+              // Reset Adaptive Flashcard Progress
+              if (user?.id) {
+                await resetAdaptiveProgress(user.id, exam?.id);
+              }
 
               ToastAndroid.show('All progress has been reset successfully', ToastAndroid.SHORT);
             } catch (error) {

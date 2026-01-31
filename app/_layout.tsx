@@ -4,14 +4,16 @@ import { RevenueCatProvider } from '@/contexts/RevenueCatContext';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import * as NavigationBar from 'expo-navigation-bar';
 import { Redirect, Stack } from 'expo-router';
 import * as NativeSplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 
+
 const queryClient = new QueryClient();
-const app_current_version_code = 7;
+const app_current_version_code = 11;
 
 NativeSplashScreen.preventAutoHideAsync();
 
@@ -20,6 +22,19 @@ function AppContent() {
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const { loading, loginRequired } = useAuth();
   const { isDark, colors } = useTheme();
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      NavigationBar.setPositionAsync('absolute');
+      NavigationBar.setBackgroundColorAsync('#ffffff00');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      NavigationBar.setButtonStyleAsync(isDark ? "light" : "dark");
+    }
+  }, [isDark]);
 
   useEffect(() => {
     const checkUpdate = async () => {
@@ -80,6 +95,7 @@ function AppContent() {
         <Stack.Screen name="+not-found" />
         <Stack.Screen name="exam-selection" />
         <Stack.Screen name="quiz" />
+        <Stack.Screen name="flashcards" options={{ headerShown: false }} />
         <Stack.Screen name="update" options={{ gestureEnabled: false }} />
       </Stack>
       <StatusBar style={isDark ? "light" : "dark"} backgroundColor="transparent" translucent />

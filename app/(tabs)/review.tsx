@@ -285,7 +285,7 @@ export default function ReviewScreen() {
           <Search size={20} color="#94A3B8" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search questions or topics..."
+            placeholder="Search questions or domains..."
             placeholderTextColor="#64748B"
             value={searchQuery}
             onChangeText={setSearchQuery}

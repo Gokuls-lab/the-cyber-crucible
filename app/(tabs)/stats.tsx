@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Dimensions,
   RefreshControl,
@@ -15,12 +16,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { getOverallProgress, getRankForLevel, isMaxLevel } from '@/lib/adaptiveRanks';
+import { getUserAdaptiveProgress, resetAdaptiveProgress } from '@/lib/flashcards'; // Added imports
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { ChartBar as BarChart, Calendar, ChevronDown, ChevronUp, Clock, Target, Trash2 } from 'lucide-react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
-import Svg, { Circle } from 'react-native-svg';
+import { ChartBar as BarChart, Calendar, ChevronDown, ChevronUp, Clock, Crown, Target, Trash2, Zap } from 'lucide-react-native'; // Added icons
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -42,6 +44,9 @@ function subjectColor(score: number) {
   if (score > 49) return '#F59E0B';
   return '#EF4444';
 }
+
+
+
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -80,9 +85,10 @@ export default function StatsScreen() {
     if (!user || !exam) return;
     if (!refreshing) setLoading(true);
     try {
-      // 1. (Skipped) Subjects fetching removed as we now use Domains.
-      // Use existing 'subjects' state as empty or remove if fully unused later.
       setSubjects([]);
+
+      // 1. Fetch Adaptive Progress
+      const adaptiveProgress = await getUserAdaptiveProgress(user.id, exam.id);
 
       // 2. Fetch all quiz sessions for the current exam
       const { data: sessions, error: sessionError } = await supabase
@@ -106,7 +112,7 @@ export default function StatsScreen() {
 
       // If there are no questions for this exam, there's nothing to show.
       if (questionIdsForExam.length === 0) {
-        setStats({ streak: 0, totalQuestions: 0, accuracy: 0, studyTime: '0m', weeklyProgress: Array(7).fill(0), subjectScores: [] });
+        setStats({ streak: 0, totalQuestions: 0, accuracy: 0, studyTime: '0m', weeklyProgress: Array(7).fill(0), subjectScores: [], adaptive: adaptiveProgress });
         setLoading(false);
         setRefreshing(false);
         return;
@@ -183,7 +189,7 @@ export default function StatsScreen() {
         weeklyProgress[i] = answers.filter((a: any) => (a.answered_at || '').slice(0, 10) === ds).length;
       }
 
-      // Calculate Domain Performance (replaces Subject Scores)
+      // Calculate Domain Performance
       const latestByQuestion: Record<string, any> = {};
       for (const a of answers) {
         if (!latestByQuestion[a.question_id] || new Date(a.answered_at).getTime() > new Date(latestByQuestion[a.question_id].answered_at).getTime()) {
@@ -194,7 +200,6 @@ export default function StatsScreen() {
       const domainMap: Record<string, { correct: number; total: number }> = {};
       for (const qid in latestByQuestion) {
         const a = latestByQuestion[qid];
-        // Use domain from the joined questions table
         const domainName = a.questions?.domain || 'Other';
 
         if (!domainMap[domainName]) domainMap[domainName] = { correct: 0, total: 0 };
@@ -202,16 +207,8 @@ export default function StatsScreen() {
         if (a.is_correct) domainMap[domainName].correct++;
       }
 
-      // Defined vibrant colors for domains to cycle through
       const DOMAIN_PALETTE = [
-        '#3B82F6', // Blue
-        '#10B981', // Emerald
-        '#8B5CF6', // Violet
-        '#F59E0B', // Amber
-        '#EC4899', // Pink
-        '#06B6D4', // Cyan
-        '#F97316', // Orange
-        '#6366F1', // Indigo
+        '#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899', '#06B6D4', '#F97316', '#6366F1',
       ];
 
       const getDomainColor = (index: number) => DOMAIN_PALETTE[index % DOMAIN_PALETTE.length];
@@ -230,11 +227,11 @@ export default function StatsScreen() {
         studyTime,
         weeklyProgress,
         subjectScores,
+        adaptive: adaptiveProgress // Add adaptive progress to stats
       });
 
     } catch (err) {
       setStats(null);
-      // alert('Failed to load stats.'); // Silent fail on refresh
       console.error(err);
     } finally {
       setLoading(false);
@@ -250,7 +247,7 @@ export default function StatsScreen() {
   const handleReset = async () => {
     Alert.alert(
       "Reset All Data",
-      "Warning:- This will permanently erase data for the current exam:\n\n• Your quiz history and results\n• All performance statistics\n• Study time tracking\n• Achievement records\n• Level Up Progress\n\nThis action cannot be undone. Do you want to proceed?",
+      "Warning:- This will permanently erase data for the current exam:\n\n• Your quiz history and results\n• All performance statistics\n• Study time tracking\n• Achievement records\n• Level Up Progress\n• Flashcard Progress\n\nThis action cannot be undone. Do you want to proceed?",
       [
         {
           text: "Cancel",
@@ -269,7 +266,6 @@ export default function StatsScreen() {
                 .eq('user_id', user?.id)
                 .eq('exam_id', exam.id);
 
-              // Get all question IDs for the current exam to delete associated answers
               const { data: examQuestions, error: questionsError } = await supabase
                 .from('questions')
                 .select('id')
@@ -294,17 +290,50 @@ export default function StatsScreen() {
                 exam_id: exam.id,
                 new_stage: 0,
               });
-              // Reset stats
+
+              // Reset Adaptive Flashcard Progress using library function
+              if (user?.id) {
+                await resetAdaptiveProgress(user.id, exam.id);
+              }
+
               setStats(null);
               setAchievements([]);
 
               ToastAndroid.show('All data has been reset successfully', ToastAndroid.SHORT);
 
-              // Refresh stats to show empty state
               fetchStats();
             } catch (error) {
               console.error(error);
               Alert.alert('Error', 'Failed to reset data. Please try again.');
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleAdaptiveReset = async () => {
+    Alert.alert(
+      "Reset Adaptive Progress",
+      "Are you sure you want to reset ONLY your Adaptive Learning progress? This will reset your Level and Rank back to the beginning.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            setLoading(true);
+            try {
+              if (user?.id) {
+                await resetAdaptiveProgress(user.id, exam.id);
+                ToastAndroid.show('Adaptive progress reset successfully', ToastAndroid.SHORT);
+                fetchStats(); // Refresh stats
+              }
+            } catch (error) {
+              console.error(error);
+              Alert.alert('Error', 'Failed to reset adaptive progress.');
             } finally {
               setLoading(false);
             }
@@ -320,15 +349,18 @@ export default function StatsScreen() {
     }
   }, [user, exam, examLoading]);
 
-  // Max value for chart
   const maxWeeklyValue = stats ? Math.max(...stats.weeklyProgress, 1) : 1;
+  const adaptiveLevel = stats?.adaptive?.current_level || 1;
+  const adaptiveRank = getRankForLevel(adaptiveLevel);
+  const adaptiveProgress = getOverallProgress(adaptiveLevel);
+  const adaptiveSwiped = stats?.adaptive?.total_cards_swiped || 0;
 
   if (examLoading) {
     return (
       <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.safeArea}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <SpinnerAnimation color={colors.primary} />
+            <ActivityIndicator size="large" color={colors.primary} />
             <Text style={{ color: '#CBD5E1', fontSize: 18, marginTop: 16 }}>Loading Stats...</Text>
           </View>
         </View>
@@ -388,13 +420,13 @@ export default function StatsScreen() {
 
           {loading && !refreshing ? (
             <View style={{ alignItems: 'center', marginTop: 50 }}>
-              <SpinnerAnimation color={colors.primary} />
+              <ActivityIndicator size="large" color={colors.primary} />
               <Text style={{ color: '#F8FAFC', fontSize: 16, marginTop: 16 }}>Analyzing performance...</Text>
             </View>
           ) : (
             <Animated.View style={[styles.contentContainer, animatedStyle]}>
               <View style={styles.metricsGrid}>
-                {/* Metric Cards with polished look */}
+                {/* Metric Cards - Same as before */}
                 <View style={styles.metricCard}>
                   <View style={[styles.metricIcon, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
                     <Calendar size={24} color="#F59E0B" strokeWidth={2.5} />
@@ -427,21 +459,66 @@ export default function StatsScreen() {
                   <Text style={styles.metricLabel}>Study Time</Text>
                 </View>
               </View>
+              {/* === NEW: Adaptive Flashcards Stats === */}
+              <View style={styles.chartCard}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Zap size={20} color={colors.primary} style={{ marginRight: 10 }} />
+                    <Text style={styles.cardTitleNoMargin}>Adaptive Flashcards</Text>
+                  </View>
+                  <TouchableOpacity onPress={handleAdaptiveReset} style={{ padding: 4 }}>
+                    <Trash2 size={16} color="#EF4444" opacity={0.7} />
+                  </TouchableOpacity>
+                </View>
 
-              {/* Normalized Weekly Chart */}
+                <View style={styles.adaptiveContainer}>
+                  {/* Rank Badge */}
+                  <View style={styles.rankBadge}>
+                    <Crown size={32} color="#F59E0B" fill="#F59E0B" />
+                  </View>
+
+                  <View style={{ alignItems: 'center', marginBottom: 16 }}>
+                    <Text style={styles.rankTitle}>{adaptiveRank}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.rankSubtitle}>Level {adaptiveLevel}</Text>
+                      {isMaxLevel(adaptiveLevel) && (
+                        <View style={{ backgroundColor: '#F59E0B20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: '#F59E0B' }}>
+                          <Text style={{ color: '#F59E0B', fontSize: 10, fontWeight: '800' }}>MAX</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+
+                  {/* Stats Row */}
+                  <View style={styles.adaptiveStatsRow}>
+                    <View style={styles.adaptiveStat}>
+                      <Text style={styles.adaptiveStatEffect}>{adaptiveSwiped}</Text>
+                      <Text style={styles.adaptiveStatLabel}>Cards Reviewed</Text>
+                    </View>
+                    <View style={styles.adaptiveDivider} />
+                    <View style={styles.adaptiveStat}>
+                      <Text style={styles.adaptiveStatEffect}>{adaptiveProgress.toFixed(0)}%</Text>
+                      <Text style={styles.adaptiveStatLabel}>Rank Progress</Text>
+                    </View>
+                  </View>
+
+                  {/* Visual Progress Bar to Next Level */}
+                  <View style={styles.rankTrack}>
+                    <View style={[styles.rankFill, { width: `${adaptiveProgress}%`, backgroundColor: colors.primary }]} />
+                  </View>
+                </View>
+              </View>
+
+              {/* Weekly Chart - Same as before */}
               <View style={styles.chartCard}>
                 <Text style={styles.cardTitle}>Weekly Activity</Text>
                 <View style={styles.chartContainer}>
                   <View style={styles.chart}>
                     {stats?.weeklyProgress?.map((score: number, index: number) => {
                       const heightPercentage = (score / maxWeeklyValue) * 100;
-                      // Ensure minimal visibility for 0 values or just use 4px
-                      // If score is 0, show very small bar for aesthetics
                       const barHeight = (score > 0 ? `${heightPercentage}%` : 2) as any;
-
                       return (
                         <View key={index} style={styles.chartColumn}>
-                          {/* Bar Wrapper for centering/track */}
                           <View style={styles.chartBarWrapper}>
                             <View
                               style={[
@@ -464,17 +541,19 @@ export default function StatsScreen() {
                 </View>
               </View>
 
+
+
+              {/* Domain Performance - Same as before */}
               <View style={styles.chartCard}>
                 <View style={styles.cardHeader}>
-                  <Text style={styles.cardTitleNoMargin}>Topic Performance</Text>
-                  {/* Filter Tabs */}
+                  <Text style={styles.cardTitleNoMargin}>Domain Performance</Text>
                   <View style={styles.filterContainer}>
                     {(['weakest', 'strongest', 'all'] as const).map((filter) => (
                       <TouchableOpacity
                         key={filter}
                         onPress={() => {
                           setTopicFilter(filter);
-                          setShowAllTopics(false); // Reset expansion on filter change
+                          setShowAllTopics(false);
                         }}
                         style={[
                           styles.filterTab,
@@ -516,11 +595,7 @@ export default function StatsScreen() {
                         {displayedTopics.map((subject: any, index: number) => (
                           <View key={index} style={styles.subjectRow}>
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                              <Text
-                                style={styles.subjectName}
-                              >
-                                {subject.name}
-                              </Text>
+                              <Text style={styles.subjectName}>{subject.name}</Text>
                               <Text style={[styles.subjectScore, { color: subjectColor(subject.score) }]}>{subject.score}%</Text>
                             </View>
                             <View style={styles.progressBarBg}>
@@ -567,7 +642,6 @@ export default function StatsScreen() {
 
 const createStyles = (colors: any) => StyleSheet.create({
   container: {
-    // paddingTop: 30, // Removed hardcoded padding
     flex: 1,
   },
   safeArea: {
@@ -726,19 +800,18 @@ const createStyles = (colors: any) => StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'space-between',
     height: '100%',
-    // paddingBottom removed to allow columns to manage spacing
   },
   chartColumn: {
     alignItems: 'center',
     flex: 1,
     height: '100%',
     justifyContent: 'flex-end',
-    gap: 8, // Add gap between bar and text
+    gap: 8,
   },
   chartBarWrapper: {
-    flex: 1, // Flex 1 to take available height above text
+    flex: 1,
     width: 12,
-    justifyContent: 'flex-end', // Aligns bar to bottom of track
+    justifyContent: 'flex-end',
     backgroundColor: colors.border,
     borderRadius: 6,
     overflow: 'hidden',
@@ -752,7 +825,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     color: colors.subText,
     textAlign: 'center',
     width: '100%',
-    // Absolute positioning removed
   },
   subjectsContainer: {
     gap: 16,
@@ -768,11 +840,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     marginRight: 12,
     flexWrap: 'wrap',
     lineHeight: 20,
-  },
-  progressBarContainer: { // Not used in new layout but kept just in case
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
   },
   progressBarBg: {
     height: 8,
@@ -790,61 +857,69 @@ const createStyles = (colors: any) => StyleSheet.create({
     minWidth: 40,
     textAlign: 'right',
   },
-  achievementsContainer: {
-    gap: 16,
-  },
-  achievementItem: {
-    flexDirection: 'row',
+  // Adaptive Styles
+  adaptiveContainer: {
     alignItems: 'center',
-    gap: 16,
+    paddingTop: 10
   },
-  achievementIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+  rankBadge: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)'
   },
-  achievementText: {
-    flex: 1,
-  },
-  achievementTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
+  rankTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#F59E0B',
     marginBottom: 4,
+    letterSpacing: 0.5
   },
-  achievementDesc: {
+  rankSubtitle: {
     fontSize: 14,
     color: colors.subText,
+    fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase'
   },
+  adaptiveStatsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    marginVertical: 20
+  },
+  adaptiveStat: {
+    alignItems: 'center'
+  },
+  adaptiveStatEffect: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 4
+  },
+  adaptiveStatLabel: {
+    fontSize: 12,
+    color: colors.subText
+  },
+  adaptiveDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: colors.border
+  },
+  rankTrack: {
+    width: '100%',
+    height: 6,
+    backgroundColor: colors.background, // Contrast against card
+    borderRadius: 3,
+    overflow: 'hidden'
+  },
+  rankFill: {
+    height: '100%',
+  }
 });
-
-function SpinnerAnimation({ color = '#F59E0B' }: { color?: string }) {
-  const rotation = useSharedValue(0);
-  React.useEffect(() => {
-    rotation.value = withRepeat(
-      withTiming(360, { duration: 1200, easing: Easing.linear }),
-      -1,
-      false
-    );
-  }, []);
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${rotation.value}deg` }],
-  }));
-  return (
-    <Animated.View style={[{ width: 64, height: 64, marginBottom: 16 }, animatedStyle]}>
-      <Svg width={64} height={64} viewBox="0 0 64 64">
-        <Circle
-          cx={32}
-          cy={32}
-          r={28}
-          stroke={color}
-          strokeWidth={6}
-          strokeDasharray={"44 88"}
-          fill="none"
-        />
-      </Svg>
-    </Animated.View>
-  );
-}
