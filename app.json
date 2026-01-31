@@ -31,7 +31,6 @@
     },
     "plugins": [
       "expo-router",
-      "./plugins/withAndroid16KB",
       [
         "expo-build-properties",
         {
@@ -41,9 +40,6 @@
             "targetSdkVersion": 35,
             "buildToolsVersion": "35.0.0",
             "ndkVersion": "27.1.12297006",
-            "extraMavenRepos": [
-              "$projectDir/../../node_modules/@react-native/gradle-plugin/repository"
-            ],
             "extraGradleProps": {
               "android.bundle.enableUncompressedNativeLibs": "false"
             },
@@ -51,9 +47,6 @@
               "jniLibs": {
                 "useLegacyPackaging": false
               }
-            },
-            "manifestPlaceholders": {
-              "android.max_page_size": "16384"
             }
           }
         }
