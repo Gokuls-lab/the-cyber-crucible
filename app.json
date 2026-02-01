@@ -40,8 +40,9 @@
             "targetSdkVersion": 35,
             "buildToolsVersion": "35.0.0",
             "ndkVersion": "27.1.12297006",
-            "extraGradleProps": {
-              "android.bundle.enableUncompressedNativeLibs": "false"
+            "extraGradleProperties": {
+              "android.bundle.enableUncompressedNativeLibs": "false",
+              "org.gradle.jvmargs": "-Xmx4g -XX:MaxMetaspaceSize=1g"
             },
             "packagingOptions": {
               "jniLibs": {
@@ -58,7 +59,8 @@
           "backgroundColor": "#000100"
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
