@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { User } from '@/types';
+import { syncOfflineQueues } from '@/utils/offlineSync';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Session, User as SupabaseUser } from '@supabase/supabase-js';
 import * as Linking from 'expo-linking';
@@ -242,6 +243,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (createError) throw createError;
         setUser(createdUser);
+        AsyncStorage.setItem('cached_user_profile', JSON.stringify(createdUser)).catch(() => { });
         console.log('[AuthProvider] Created new user profile', createdUser);
       } else if (error) {
         throw error;
@@ -258,17 +260,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           if (!updateError && updatedUser) {
             setUser(updatedUser);
+            AsyncStorage.setItem('cached_user_profile', JSON.stringify(updatedUser)).catch(() => { });
             console.log('[AuthProvider] Loaded and updated user profile', updatedUser);
             return;
           }
         }
 
         setUser(data);
+        AsyncStorage.setItem('cached_user_profile', JSON.stringify(data)).catch(() => { });
         console.log('[AuthProvider] Loaded user profile', data);
+
+        // Trigger generic background sync for any queued offline data!
+        syncOfflineQueues().catch((e) => console.log('Offline sync failed on boot', e));
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('[AuthProvider] Error in fetchUserProfile:', error);
-      setUser(null);
+
+      // If it's a network issue or timeout, don't force them out. Use a fallback user object.
+      // This prevents the app from "crashing" to the login screen just because of poor internet.
+      const isNetworkError = error?.message?.includes('Network') || error?.message?.includes('fetch');
+
+      if (isNetworkError) {
+        console.warn('[AuthProvider] Network error getting profile. Checking for cached profile...');
+        try {
+          const cachedProfile = await AsyncStorage.getItem('cached_user_profile');
+          if (cachedProfile) {
+            console.log('[AuthProvider] Loaded cached profile offline.');
+            setUser(JSON.parse(cachedProfile));
+            return;
+          }
+        } catch (e) {
+          // ignore cache read error
+        }
+
+        console.log('[AuthProvider] No cached profile found. Asking to login again.');
+        Alert.alert(
+          'Offline Mode',
+          'No cached profile found. Please connect to the internet to load your profile.',
+          [{ text: 'OK' }]
+        );
+        setUser(null);
+      } else {
+        // Genuine non-network failure (e.g., unauthorized)
+        setUser(null);
+      }
+
       setError(error as Error);
     }
   };
@@ -389,6 +425,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(null);
       try {
         await AsyncStorage.removeItem('supabase.auth.token');
+        await AsyncStorage.removeItem('cached_user_profile');
       } catch (e) {
         // Ignore async storage error
       }

@@ -18,6 +18,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { supabase } from '@/lib/supabase';
+import { checkNetwork } from '@/utils/offlineSync';
 
 const { width, height } = Dimensions.get('window');
 const guidelineBaseWidth = 375;
@@ -47,6 +48,14 @@ export default function DailyQuizScreen() {
     const fetchDailyQuestion = async () => {
         if (!exam) return;
         setLoading(true);
+        const isConnected = await checkNetwork();
+        if (!isConnected) {
+            Alert.alert('Offline', 'Daily question requires an internet connection.');
+            setLoading(false);
+            router.back();
+            return;
+        }
+
         try {
             const today = new Date().toISOString().slice(0, 10);
 

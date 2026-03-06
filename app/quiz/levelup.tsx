@@ -5,6 +5,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useLevelUpAccuracy } from '@/hooks/useLevelUpAccuracy';
 import { useQuizModes } from '@/lib/QuizModes';
 import { supabase } from '@/lib/supabase';
+import { checkNetwork } from '@/utils/offlineSync';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { AlertCircle, ArrowRight, BookOpen, ChevronLeft, Crown, RefreshCcw } from 'lucide-react-native';
@@ -155,6 +156,14 @@ export default function LevelUpQuizScreen() {
   const fetchQuestions = useCallback(async () => {
     if (!user) return;
 
+    const isConnected = await checkNetwork();
+    if (!isConnected) {
+      Alert.alert('Offline', 'Level Up mode requires an active internet connection.');
+      setLoading(false);
+      router.back();
+      return;
+    }
+
     if (stageIndex >= STAGES.length) {
       setAllStagesCompleted(true);
       setLoading(false);
@@ -163,39 +172,53 @@ export default function LevelUpQuizScreen() {
 
     setLoading(true);
     const currentDifficulty = STAGES[stageIndex];
-    // const { data, error } = await supabase
-    //   .from('questions')
-    //   .select('*, options:question_options(*)')
-    //   .eq('difficulty', currentDifficulty).limit(rawQuizModes[3]?.num_questions)
-    //   ;
 
-    // Step 1: Get previous correctly answered question IDs from level_up sessions
+    // Step 1: Get previous correctly answered question IDs from level_up sessions (never repeat)
     const { data: levelUpSessions, error: sessionError } = await supabase
       .from('quiz_sessions')
-      .select('id')
+      .select('id, completed_at')
       .eq('user_id', user.id)
       .eq('exam_id', exam?.id)
-      .eq('quiz_type', 'level_up');
+      .eq('quiz_type', 'level_up')
+      .order('completed_at', { ascending: false });
 
-    const levelUpSessionIds = levelUpSessions?.map(s => s.id);
+    const levelUpSessionIds = levelUpSessions?.map(s => s.id) || [];
 
     const { data: correctAnswers, error: answersError } = await supabase
       .from('user_answers')
       .select('question_id')
       .eq('user_id', user.id)
       .eq('is_correct', true)
-      .in('quiz_session_id', levelUpSessionIds || []);
+      .in('quiz_session_id', levelUpSessionIds.length > 0 ? levelUpSessionIds : ['no-match']);
 
     const correctQuestionIds = correctAnswers?.map(a => a.question_id) || [];
 
-    // Step 2: Fetch new questions excluding those correctly answered before
+    // Step 2: Get recently wrong question IDs (cool-down: last 2 level_up sessions)
+    const recentSessionIds = levelUpSessionIds.slice(0, 2); // already sorted desc
+    let recentlyWrongIds: string[] = [];
+    if (recentSessionIds.length > 0) {
+      const { data: recentWrong } = await supabase
+        .from('user_answers')
+        .select('question_id')
+        .in('quiz_session_id', recentSessionIds)
+        .eq('is_correct', false);
+      recentlyWrongIds = recentWrong?.map(a => a.question_id) || [];
+    }
+
+    // Combine all IDs to exclude
+    const allExcludeIds = [...new Set([...correctQuestionIds, ...recentlyWrongIds])];
+
+    // Step 3: Fetch new questions excluding correctly answered AND recently wrong
     let query = supabase
       .from('questions')
       .select('*, options:question_options(*)')
       .eq('difficulty', currentDifficulty)
       .eq('exam', exam?.id)
-      .not('id', 'in', `(${correctQuestionIds.join(',')})`)
       .eq('question_type', 'multiple_choice');
+
+    if (allExcludeIds.length > 0) {
+      query = query.not('id', 'in', `(${allExcludeIds.join(',')})`);
+    }
 
     const isPremium = isPro;
     if (!isPremium) {
@@ -203,7 +226,6 @@ export default function LevelUpQuizScreen() {
     }
 
     const { data: questions, error: questionError } = await query.limit(rawQuizModes[3]?.num_questions);
-
 
     if (questionError) {
       console.error('Error fetching questions:', questionError);
@@ -224,7 +246,7 @@ export default function LevelUpQuizScreen() {
       }
 
       setQuestions(shuffledQuestions);
-      setStageStartTime(Date.now()); // Start timing when new questions load
+      setStageStartTime(Date.now());
     }
     setLoading(false);
   }, [user, stageIndex, rawQuizModes, isPro]);
@@ -323,13 +345,19 @@ export default function LevelUpQuizScreen() {
           onPress: async () => {
             try {
               // 1. Reset level_up_stage
+              console.log('[LevelUpScreen] Resetting level for:', { uid: user?.id, examId: exam?.id });
+
               const { error: updateError } = await supabase.rpc("update_exam_stage", {
-                uid: user.id,
-                exam_id: exam.id,
+                uid: user?.id,
+                exam_id: exam?.id,
                 new_stage: 0, // reset current exam only
               });
 
-              if (updateError) throw updateError;
+              if (updateError) {
+                console.error('[LevelUpScreen] RPC Error:', updateError);
+                throw updateError;
+              }
+              console.log('[LevelUpScreen] Level reset RPC successful');
 
               // 2. Get all level_up session IDs
               const { data: sessions, error: sessionError } = await supabase

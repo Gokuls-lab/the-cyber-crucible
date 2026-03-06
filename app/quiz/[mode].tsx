@@ -5,6 +5,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { updateProgress } from '@/lib/progress';
 import { useQuizModes } from '@/lib/QuizModes';
 import { supabase } from '@/lib/supabase';
+import { checkNetwork, getOfflineQuestions, queueOfflineSession } from '@/utils/offlineSync';
 import { MaterialIcons as Icon } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -178,12 +179,6 @@ export default function QuizScreen() {
         query = query.eq('exam', exam.id);
       }
 
-
-      console.log('selectedSubjects', selectedSubjects);
-      console.log('buildQuizDifficulty', buildQuizDifficulty);
-      console.log('selectedDomains', selectedDomains);
-
-
       if (buildQuizDifficulty && buildQuizDifficulty.length > 0) {
         query = query.in('difficulty', buildQuizDifficulty);
       }
@@ -192,21 +187,62 @@ export default function QuizScreen() {
       }
 
       // Fetch a large pool to ensure randomness after shuffling
-      // We filter by valid questions (free/premium) at the DB level, so this limit returns only valid candidates.
-      query = applyPremiumFilter(query).limit(200);
+      query = applyPremiumFilter(query).limit(300);
 
       const { data, error } = await query;
-      console.log('Supabase error:', error);
-      console.log('Supabase data:', data);
       if (error) throw error;
       if (!data || data.length === 0) {
         Alert.alert('No questions found for your filters.');
         setQuestions([]);
-        setTimeLeft(isTimedQuiz ? buildQuizTime : null); // use null for no timer
+        setTimeLeft(isTimedQuiz ? buildQuizTime : null);
         setLoading(false);
         return;
       }
-      // Shuffle and pick N questions in JS
+
+      // --- Exclusion logic: same as RPC but applied client-side ---
+      // 1. Get correctly answered question IDs (never repeat)
+      let excludeCorrectIds = new Set<string>();
+      if (user?.id) {
+        const { data: correctData } = await supabase
+          .from('user_answers')
+          .select('question_id')
+          .eq('user_id', user.id)
+          .eq('is_correct', true);
+        if (correctData) {
+          excludeCorrectIds = new Set(correctData.map((a: any) => a.question_id));
+        }
+      }
+
+      // 2. Get recently wrong question IDs (cool-down: last 2 sessions)
+      let excludeRecentWrongIds = new Set<string>();
+      if (user?.id && exam?.id) {
+        const { data: recentSessions } = await supabase
+          .from('quiz_sessions')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('exam_id', exam.id)
+          .order('completed_at', { ascending: false })
+          .limit(2);
+        if (recentSessions && recentSessions.length > 0) {
+          const sessionIds = recentSessions.map((s: any) => s.id);
+          const { data: recentWrong } = await supabase
+            .from('user_answers')
+            .select('question_id')
+            .in('quiz_session_id', sessionIds)
+            .eq('is_correct', false);
+          if (recentWrong) {
+            excludeRecentWrongIds = new Set(recentWrong.map((a: any) => a.question_id));
+          }
+        }
+      }
+
+      // 3. Filter out excluded questions, then sort: unattempted first
+      const attemptedIds = new Set([...excludeCorrectIds, ...excludeRecentWrongIds]);
+      const filtered = (data as any[]).filter(q =>
+        !excludeCorrectIds.has(q.id) && !excludeRecentWrongIds.has(q.id)
+      );
+
+      // Shuffle: unattempted first, then old wrong
       function shuffle(array: any[]) {
         for (let i = array.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
@@ -214,9 +250,10 @@ export default function QuizScreen() {
         }
         return array;
       }
-      const mappedQuestions = (data as any[]).map(q => ({
+
+      const mappedQuestions = filtered.map(q => ({
         ...q,
-        is_premium: q.is_premium, // Ensure this is mapped
+        is_premium: q.is_premium,
         options: (q.question_options || []).sort((a: any, b: any) =>
           (a.option_letter || '').localeCompare(b.option_letter || '')
         ),
@@ -224,7 +261,7 @@ export default function QuizScreen() {
       const shuffled = shuffle(mappedQuestions);
       const selected = shuffled.slice(0, buildQuizNumQuestions);
       setQuestions(selected as Question[]);
-      setTimeLeft(isTimedQuiz ? buildQuizTime : null); // use null for no timer
+      setTimeLeft(isTimedQuiz ? buildQuizTime : null);
     } catch (err) {
       Alert.alert('Error', 'Could not fetch questions for your quiz.');
     }
@@ -239,6 +276,9 @@ export default function QuizScreen() {
     if (mode === 'custom') return; // handled in build quiz modal
     if (!exam) return;
     setLoading(true);
+
+    const isConnected = await checkNetwork();
+
     try {
       let questionCount = 10; // Default for quick_10
       if (mode === 'quick_10') {
@@ -258,6 +298,28 @@ export default function QuizScreen() {
       }
 
       questionCount = questionCount || 10;
+
+      // Handle offline mode by loading cached questions (quick fallback)
+      if (!isConnected) {
+        if (mode === 'quick_10' || mode === 'timed') {
+          const cachedQs = await getOfflineQuestions(questionCount);
+          if (cachedQs.length > 0) {
+            setQuestions(cachedQs as Question[]);
+            setLoading(false);
+            return;
+          } else {
+            Alert.alert('Offline', 'No offline questions available. Please connect to the internet.');
+            router.back();
+            setLoading(false);
+            return;
+          }
+        } else {
+          Alert.alert('Offline', `The mode '${mode}' requires an active internet connection.`);
+          router.back();
+          setLoading(false);
+          return;
+        }
+      }
 
       if (mode === 'weakest_subject') {
         if (!user || !user.id) throw new Error('User not found');
@@ -284,13 +346,21 @@ export default function QuizScreen() {
 
         const domain = weakestSubject[0].domain;
 
-        let queryWeakest = supabase
-          .from('questions')
+        // Use the same RPC as other modes (handles correct exclusion + cool-down)
+        // Fetch a larger pool, then filter by domain client-side
+        const { data, error } = await supabase
+          .rpc('fetch_mode_questions', {
+            p_exam_id: exam.id,
+            p_limit_count: questionCount * 3, // fetch more to filter by domain
+            p_user_id: user.id,
+            p_quiz_mode: mode,
+            p_is_premium: isPremium
+          })
           .select(`
             id,
             question_text,
-            explanation,
             question_type,
+            explanation,
             difficulty,
             domain,
             question_options (
@@ -298,20 +368,25 @@ export default function QuizScreen() {
               option_text,
               option_letter,
               is_correct
-            )
-          `)
-          .eq('domain', domain)
-          .eq('question_type', 'multiple_choice');
-
-        if (!isPremium) {
-          queryWeakest = queryWeakest.eq('is_premium', false);
-        }
-
-        const { data, error } = await queryWeakest.limit(questionCount);
+            ),
+            is_premium
+          `);
 
         if (error) throw error;
+
+        // Filter by weakest domain and limit to requested count
+        const domainFiltered = (data as any[] || [])
+          .filter((q: any) => q.domain === domain)
+          .slice(0, questionCount);
+
+        if (domainFiltered.length === 0) {
+          Alert.alert('No Questions', `No unattempted questions available for domain: ${domain}`);
+          router.back();
+          return;
+        }
+
         setQuestions(
-          (data as any[]).map(q => ({
+          domainFiltered.map((q: any) => ({
             ...q,
             options: (q.question_options || []).sort((a: any, b: any) =>
               (a.option_letter || '').localeCompare(b.option_letter || '')
@@ -324,23 +399,37 @@ export default function QuizScreen() {
 
       if (mode === 'missed') {
         // Get user's missed (incorrect) questions for this exam
-        const { data: subjectExams, error: subjectExamError } = await supabase
-          .from('subject_exams')
-          .select('subject_id')
-          .eq('exam_id', exam.id);
-        if (subjectExamError) throw subjectExamError;
-        if (!subjectExams || subjectExams.length === 0) throw new Error('No subjects found for this exam');
-        const subjectIds = subjectExams.map(se => se.subject_id);
-
-        // Get the user's most recent answer for each question, and only include if the latest is incorrect
+        // Use the SAME logic as the Review page to ensure counts match exactly
         if (!user || !user.id) throw new Error('User not found');
-        // 1. Get all answers for this user, ordered by question and answered_at desc
+
+        // 1. Get quiz sessions for this user AND this exam (capped at 50, matching Review page)
+        const { data: sessions, error: sessionError } = await supabase
+          .from('quiz_sessions')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('exam_id', exam.id)
+          .order('completed_at', { ascending: false })
+          .limit(50);
+        if (sessionError) throw sessionError;
+
+        if (!sessions || sessions.length === 0) {
+          Alert.alert('No Missed Questions', 'You have not completed any quizzes yet.');
+          router.back();
+          setQuestions([]);
+          setLoading(false);
+          return;
+        }
+
+        const sessionIds = sessions.map((s: any) => s.id);
+
+        // 2. Get all answers from these exam-scoped sessions, ordered by most recent first
         const { data: allAnswers, error: allAnswersError } = await supabase
           .from('user_answers')
           .select('question_id, is_correct, answered_at')
-          .eq('user_id', user.id)
+          .in('quiz_session_id', sessionIds)
           .order('answered_at', { ascending: false });
         if (allAnswersError) throw allAnswersError;
+
         if (!allAnswers || allAnswers.length === 0) {
           Alert.alert('No Missed Questions', 'You have not answered any questions yet.');
           router.back();
@@ -348,17 +437,20 @@ export default function QuizScreen() {
           setLoading(false);
           return;
         }
-        // 2. For each question_id, keep only the latest answer
+
+        // 3. For each question_id, keep only the latest answer (already sorted desc)
         const latestByQuestion = new Map();
         for (const ans of allAnswers) {
           if (!latestByQuestion.has(ans.question_id)) {
             latestByQuestion.set(ans.question_id, ans);
           }
         }
-        // 3. Only include questions where the latest answer is incorrect
+
+        // 4. Only include questions where the LATEST answer is incorrect
         const missedQuestionIds = Array.from(latestByQuestion.values())
           .filter(ans => ans.is_correct === false)
           .map(ans => ans.question_id);
+
         if (missedQuestionIds.length === 0) {
           Alert.alert('No Missed Questions', 'You have no currently missed questions!');
           router.back();
@@ -366,12 +458,18 @@ export default function QuizScreen() {
           setLoading(false);
           return;
         }
-        // Fetch the missed questions (and their options), but only for this exam's subjects
+
+        // 5. Fetch the missed questions by their IDs (capped at 50)
+        //    NO .eq('exam', exam.id) filter needed here — the question IDs already
+        //    came from sessions scoped to this exam. Adding that filter would drop
+        //    questions where questions.exam is NULL, causing a count mismatch with
+        //    the Review page which counts directly from user_answers.
         let missedQuery = supabase
           .from('questions')
           .select(`
             id,
             question_text,
+            question_type,
             explanation,
             difficulty,
             domain,
@@ -383,14 +481,13 @@ export default function QuizScreen() {
               is_correct
             )
           `)
-          .in('id', missedQuestionIds)
-          .in('subject_id', subjectIds);
+          .in('id', missedQuestionIds);
 
         if (!isPremium) {
           missedQuery = missedQuery.eq('is_premium', false);
         }
 
-        const { data, error } = await missedQuery.limit(questionCount);
+        const { data, error } = await missedQuery.limit(50);
         if (error) throw error;
         if (!data || data.length === 0) {
           Alert.alert('No Missed Questions', 'You have not answered any questions incorrectly yet.');
@@ -402,10 +499,11 @@ export default function QuizScreen() {
         const formattedQuestions = data.map((q: any) => ({
           id: q.id,
           question_text: q.question_text,
+          question_type: q.question_type || 'multiple_choice',
           explanation: q.explanation,
           difficulty: q.difficulty,
           domain: q.domain,
-          is_premium: q.is_premium, // Ensure this is here
+          is_premium: q.is_premium,
           options: q.question_options.sort((a: any, b: any) =>
             a.option_letter.localeCompare(b.option_letter)
           ),
@@ -612,7 +710,6 @@ export default function QuizScreen() {
       }
       const timeTaken = Math.floor((Date.now() - startTime) / 1000);
 
-      // Create quiz session
       const quizTypeMap: Record<string, string> = {
         weakest_subject: 'weakest',
         quick_10: 'quick_10',
@@ -625,20 +722,27 @@ export default function QuizScreen() {
       };
       const quizType = quizTypeMap[mode] || mode;
 
-      // Ensure user subscription status is respected (Double check in backend via RLS)
-      // This is just a frontend logical mapping if needed in future
+      const sessionObj = {
+        user_id: user.id,
+        quiz_type: quizType,
+        score: correctAnswers,
+        total_questions: questions.length,
+        time_taken_seconds: timeTaken,
+        completed_at: new Date().toISOString(),
+        exam_id: exam?.id,
+      };
+
+      const isConnected = await checkNetwork();
+      if (!isConnected) {
+        // Offline queuing
+        await queueOfflineSession(sessionObj, sessionAnswers.map(ans => ({ ...ans, user_id: user.id })));
+        router.replace(`/results?session=offline-${Date.now()}`);
+        return;
+      }
 
       const { data: sessionData, error: sessionError } = await supabase
         .from('quiz_sessions')
-        .insert({
-          user_id: user.id,
-          quiz_type: quizType,
-          score: correctAnswers,
-          total_questions: questions.length,
-          time_taken_seconds: timeTaken,
-          completed_at: new Date().toISOString(),
-          exam_id: exam?.id,
-        })
+        .insert(sessionObj)
         .select('id')
         .single();
 

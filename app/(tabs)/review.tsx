@@ -30,7 +30,8 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTim
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 
-const FILTER_OPTIONS = ['All', 'Incorrect', 'Correct', 'Recent'];
+const QUIZ_FILTER_OPTIONS = ['All', 'Incorrect', 'Correct', 'Recent'];
+const FLASHCARD_FILTER_OPTIONS = ['All', 'Unknown', 'Known', 'Recent'];
 
 export default function ReviewScreen() {
   const insets = useSafeAreaInsets();
@@ -45,6 +46,15 @@ export default function ReviewScreen() {
   const [reviewedQuestions, setReviewedQuestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // New state for review mode
+  const [reviewMode, setReviewMode] = useState<'quiz' | 'flashcard'>('quiz');
+
+  // Reset filter when mode changes
+  useEffect(() => {
+    setSelectedFilter('All');
+  }, [reviewMode]);
+
+  const currentFilterOptions = reviewMode === 'flashcard' ? FLASHCARD_FILTER_OPTIONS : QUIZ_FILTER_OPTIONS;
 
   // Animation values
   const opacity = useSharedValue(0);
@@ -66,83 +76,139 @@ export default function ReviewScreen() {
     if (!user) return;
     if (!refreshing) setLoading(true); // Don't block UI on refresh
     try {
-      // Get latest quiz_sessions for user (limit to last 50 sessions)
-      const { data: sessions, error: sessionError } = await supabase
-        .from('quiz_sessions')
-        .select('id, completed_at')
-        .eq('user_id', user.id)
-        .eq('exam_id', exam?.id)
-        .order('completed_at', { ascending: false })
-        .limit(50);
-      if (sessionError) throw sessionError;
-      const sessionIds = sessions.map((s: any) => s.id);
-      if (sessionIds.length === 0) {
-        setReviewedQuestions([]);
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-
-      // Get user_answers for these sessions
-      let answersQuery = supabase
-        .from('user_answers')
-        .select(`
-          id,
-          question_id,
-          selected_option_id,
-          is_correct,
-          answered_at,
-          quiz_session_id,
-          questions:question_id (question_text, explanation, difficulty, domain, subject_id),
-          selected_option:selected_option_id (option_text),
-          quiz_sessions:quiz_session_id (completed_at)
-        `)
-        .in('quiz_session_id', sessionIds)
-        .order('answered_at', { ascending: false });
-
-      const { data: answers, error: answerError } = await answersQuery;
-      if (answerError) throw answerError;
-
-      // For each answer, get the correct option
-      const questionIds = [...new Set(answers.map((a: any) => a.question_id))];
-      let correctOptionsMap: Record<string, string> = {};
-      if (questionIds.length > 0) {
-        const { data: correctOptions, error: correctOptErr } = await supabase
-          .from('question_options')
-          .select('question_id, option_text')
-          .eq('is_correct', true)
-          .in('question_id', questionIds);
-        if (!correctOptErr && correctOptions) {
-          correctOptionsMap = correctOptions.reduce((acc: any, cur: any) => {
-            acc[cur.question_id] = cur.option_text;
-            return acc;
-          }, {});
+      if (reviewMode === 'quiz') {
+        // --- QUIZ MODE Logic ---
+        // Get quiz_sessions for user for this exam (capped at 50 most recent)
+        const { data: sessions, error: sessionError } = await supabase
+          .from('quiz_sessions')
+          .select('id, completed_at')
+          .eq('user_id', user.id)
+          .eq('exam_id', exam?.id)
+          .order('completed_at', { ascending: false })
+          .limit(50);
+        if (sessionError) throw sessionError;
+        const sessionIds = sessions.map((s: any) => s.id);
+        if (sessionIds.length === 0) {
+          setReviewedQuestions([]);
+          setLoading(false);
+          setRefreshing(false);
+          return;
         }
-      }
 
-      // Deduplicate: keep only the most recent answer per question_id
-      const latestByQuestion = new Map();
-      for (const a of answers) {
-        if (!latestByQuestion.has(a.question_id)) {
-          latestByQuestion.set(a.question_id, a);
+        // Get user_answers for these sessions
+        let answersQuery = supabase
+          .from('user_answers')
+          .select('id, question_id, selected_option_id, is_correct, answered_at, quiz_session_id, questions:question_id (question_text, explanation, difficulty, domain, subject_id), selected_option:selected_option_id (option_text), quiz_sessions:quiz_session_id (completed_at)')
+          .in('quiz_session_id', sessionIds)
+          .order('answered_at', { ascending: false });
+
+        const { data: answers, error: answerError } = await answersQuery;
+        if (answerError) throw answerError;
+
+        // For each answer, get the correct option
+        const questionIds = [...new Set((answers || []).map((a: any) => a.question_id))];
+        let correctOptionsMap: Record<string, string> = {};
+        if (questionIds.length > 0) {
+          const { data: correctOptions, error: correctOptErr } = await supabase
+            .from('question_options')
+            .select('question_id, option_text')
+            .eq('is_correct', true)
+            .in('question_id', questionIds);
+          if (!correctOptErr && correctOptions) {
+            correctOptionsMap = correctOptions.reduce((acc: any, cur: any) => {
+              acc[cur.question_id] = cur.option_text;
+              return acc;
+            }, {});
+          }
         }
-      }
 
-      // Map to UI format
-      const reviewed = Array.from(latestByQuestion.values())
-        .filter((a: any) => a.questions && a.questions.question_text && a.questions.question_text.trim() !== '')
-        .map((a: any) => ({
-          id: a.id,
-          question: a.questions.question_text,
-          userAnswer: a.selected_option?.option_text || '',
-          correctAnswer: correctOptionsMap[a.question_id] || '',
-          isCorrect: a.is_correct,
-          subject: a.questions.domain || 'General',
-          difficulty: a.questions.difficulty || 'Easy',
-          date: a.quiz_sessions?.completed_at?.slice(0, 10) || '',
-          explanation: a.questions.explanation || '',
-        }));
-      setReviewedQuestions(reviewed);
+        // Deduplicate: keep only the most recent answer per question_id
+        const latestByQuestion = new Map();
+        for (const a of (answers || [])) {
+          if (!latestByQuestion.has(a.question_id)) {
+            latestByQuestion.set(a.question_id, a);
+          }
+        }
+
+        // Map to UI format
+        const reviewed = Array.from(latestByQuestion.values())
+          .filter((a: any) => a.questions && a.questions.question_text && a.questions.question_text.trim() !== '')
+          .map((a: any) => ({
+            id: a.id,
+            question: a.questions.question_text,
+            userAnswer: a.selected_option?.option_text || '',
+            correctAnswer: correctOptionsMap[a.question_id] || '',
+            isCorrect: a.is_correct,
+            subject: a.questions.domain || 'General',
+            difficulty: a.questions.difficulty || 'Easy',
+            date: a.quiz_sessions?.completed_at?.slice(0, 10) || '',
+            explanation: a.questions.explanation || '',
+          }));
+        setReviewedQuestions(reviewed);
+
+      } else {
+        // --- FLASHCARD MODE Logic ---
+        // Fetch from user_study_logs
+        // We need to join with adaptive_questions to get question details
+        // Note: logs has question_id -> adaptive_questions(id)
+
+        // 1. Get logs for this user and exam. Ideally we filter by exam via the question relation, 
+        //    but supabase join filtering can be tricky.
+        //    Let's first get adaptive_questions IDs for this exam to filter logs efficiently if possible,
+        //    or just fetch logs and filter by joined question exam_id.
+        //    Given the schema, user_study_logs links to adaptive_questions.
+
+        // Approach: Fetch logs, join adaptive_questions. Order by created_at desc.
+        const { data: logs, error: logsError } = await supabase
+          .from('user_study_logs')
+          .select(`
+            id,
+            question_id,
+            is_correct,
+            created_at,
+            question:question_id (
+              id,
+              question_text,
+              answer_text,
+              exam_id,
+              domain,
+              difficulty_tier
+            )
+          `)
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(200); // Limit to recent 200 flashcards for performance
+
+        if (logsError) throw logsError;
+
+        // Filter for current exam and deduplicate
+        const relevantLogs = (logs || []).filter((log: any) => log.question?.exam_id === exam.id);
+
+        const latestByQuestionFlashcard = new Map();
+        for (const log of relevantLogs) {
+          // We want to show individual attempts or unique questions? 
+          // Usually "Review" implies seeing unique questions. User might have seen same card multiple times.
+          // Let's show unique questions, keeping the LATEST attempt status.
+          if (!latestByQuestionFlashcard.has(log.question_id)) {
+            latestByQuestionFlashcard.set(log.question_id, log);
+          }
+        }
+
+        const reviewedFlashcards = Array.from(latestByQuestionFlashcard.values())
+          .map((log: any) => ({
+            id: log.id, // log id
+            question: log.question?.question_text || 'Unknown Question',
+            userAnswer: log.is_correct ? 'Marked as Known' : 'Marked as Unknown', // Flashcards don't have selected options usually
+            correctAnswer: log.question?.answer_text || '', // The "Back" of the card
+            isCorrect: log.is_correct,
+            subject: '', // Hide domain for flashcards
+            difficulty: `Tier ${log.question?.difficulty_tier || '?'}`,
+            date: log.created_at?.slice(0, 10) || '',
+            explanation: '', // Hide explanation for flashcards
+          }));
+
+        setReviewedQuestions(reviewedFlashcards);
+      }
 
     } catch (err) {
       console.error(err);
@@ -151,7 +217,7 @@ export default function ReviewScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user, exam]);
+  }, [user, exam, reviewMode]);
 
   useEffect(() => {
     fetchReviewedQuestions();
@@ -165,7 +231,7 @@ export default function ReviewScreen() {
   const handleClearHistory = async () => {
     Alert.alert(
       "Clear Review History",
-      "Are you sure you want to delete all your quiz history for this exam? This action cannot be undone.",
+      `Are you sure you want to delete all your ${reviewMode === 'flashcard' ? 'flashcard' : 'quiz'} history for this exam? This action cannot be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -174,27 +240,61 @@ export default function ReviewScreen() {
           onPress: async () => {
             setLoading(true);
             try {
-              // Delete sessions (cascades to answers usually, but safe to be explicit if needed, 
-              // but standard RLS/FK policies might handle it. Here we mirror stats logic)
-              await supabase
-                .from('quiz_sessions')
-                .delete()
-                .eq('user_id', user?.id)
-                .eq('exam_id', exam?.id);
+              console.log('[ReviewScreen] Clearing history for:', { uid: user?.id, examId: exam?.id, mode: reviewMode });
 
-              // Also delete orphaned answers if not cascaded (safe measure)
-              // But assuming cascade or just clearing stats logic:
-              const { data: examQuestions } = await supabase
-                .from('questions')
-                .select('id')
-                .eq('exam', exam?.id);
-              if (examQuestions && examQuestions.length > 0) {
-                const qIds = examQuestions.map(q => q.id);
-                await supabase.from('user_answers').delete().eq('user_id', user?.id).in('question_id', qIds);
+              if (reviewMode === 'quiz') {
+                // Delete sessions
+                await supabase
+                  .from('quiz_sessions')
+                  .delete()
+                  .eq('user_id', user?.id)
+                  .eq('exam_id', exam?.id);
+
+                // Delete answers fallback
+                const { data: examQuestions } = await supabase
+                  .from('questions')
+                  .select('id')
+                  .eq('exam', exam?.id);
+                if (examQuestions && examQuestions.length > 0) {
+                  const qIds = examQuestions.map(q => q.id);
+                  await supabase.from('user_answers').delete().eq('user_id', user?.id).in('question_id', qIds);
+                }
+
+                // Reset Level Up progression
+                await supabase.rpc('update_exam_stage', {
+                  uid: user?.id,
+                  exam_id: exam?.id,
+                  new_stage: 0,
+                });
+              } else {
+                // --- Flashcard Clear ---
+                // We need to delete from user_study_logs where question_id belongs to this exam
+                const { data: questions } = await supabase
+                  .from('adaptive_questions')
+                  .select('id')
+                  .eq('exam_id', exam?.id);
+
+                if (questions && questions.length > 0) {
+                  const qIds = questions.map(q => q.id);
+                  await supabase.from('user_study_logs')
+                    .delete()
+                    .eq('user_id', user?.id)
+                    .in('question_id', qIds);
+
+                  // Reset adaptive progress
+                  await supabase.rpc('reset_adaptive_progress_v2', {
+                    p_user_id: user?.id,
+                    p_exam_id: exam?.id,
+                    p_level: 1,
+                    p_swiped: 0
+                  });
+                }
               }
 
               setReviewedQuestions([]);
               ToastAndroid.show('History cleared', ToastAndroid.SHORT);
+              // Refresh to ensure clean state
+              fetchReviewedQuestions();
             } catch (err) {
               Alert.alert('Error', 'Failed to clear history');
               console.error(err);
@@ -223,8 +323,10 @@ export default function ReviewScreen() {
     // 2. Category Filter
     switch (selectedFilter) {
       case 'Incorrect':
+      case 'Unknown':
         return filtered.filter(q => !q.isCorrect);
       case 'Correct':
+      case 'Known':
         return filtered.filter(q => q.isCorrect);
       case 'Recent':
         if (filtered.length === 0) return [];
@@ -270,7 +372,9 @@ export default function ReviewScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Review Questions</Text>
-            <Text style={styles.subtitle}>Learn from your mistakes</Text>
+            <Text style={styles.subtitle}>
+              {reviewMode === 'quiz' ? 'Learn from your mistakes' : 'Review your flashcard mastery'}
+            </Text>
           </View>
           <TouchableOpacity
             onPress={handleClearHistory}
@@ -278,6 +382,24 @@ export default function ReviewScreen() {
           >
             <Trash2 size={20} color="#EF4444" />
           </TouchableOpacity>
+        </View>
+
+        {/* Mode Toggle Capsule */}
+        <View style={styles.modeToggleContainer}>
+          <View style={styles.modeToggleBg}>
+            <TouchableOpacity
+              style={[styles.modeToggleBtn, reviewMode === 'quiz' && styles.modeToggleBtnActive]}
+              onPress={() => setReviewMode('quiz')}
+            >
+              <Text style={[styles.modeToggleText, reviewMode === 'quiz' && styles.modeToggleTextActive]}>Quiz Results</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modeToggleBtn, reviewMode === 'flashcard' && styles.modeToggleBtnActive]}
+              onPress={() => setReviewMode('flashcard')}
+            >
+              <Text style={[styles.modeToggleText, reviewMode === 'flashcard' && styles.modeToggleTextActive]}>Flashcards</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Search Bar - Fixed at top */}
@@ -300,7 +422,7 @@ export default function ReviewScreen() {
         {/* Filter Tabs - Fixed below search */}
         <View style={styles.filterTabsContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterTabsContent}>
-            {FILTER_OPTIONS.map((option) => (
+            {currentFilterOptions.map((option) => (
               <TouchableOpacity
                 key={option}
                 style={[
@@ -337,12 +459,12 @@ export default function ReviewScreen() {
             </View>
             <View style={styles.statCard}>
               <Text style={[styles.statValue, { color: '#10B981' }]}>{stats.correct}</Text>
-              <Text style={styles.statLabel}>Correct</Text>
+              <Text style={styles.statLabel}>{reviewMode === 'flashcard' ? 'Known' : 'Correct'}</Text>
               <View style={[styles.statAccent, { backgroundColor: '#10B981' }]} />
             </View>
             <View style={styles.statCard}>
               <Text style={[styles.statValue, { color: '#EF4444' }]}>{stats.incorrect}</Text>
-              <Text style={styles.statLabel}>Incorrect</Text>
+              <Text style={styles.statLabel}>{reviewMode === 'flashcard' ? 'Unknown' : 'Incorrect'}</Text>
               <View style={[styles.statAccent, { backgroundColor: '#EF4444' }]} />
             </View>
             <View style={styles.statCard}>
@@ -378,10 +500,10 @@ export default function ReviewScreen() {
                             styles.statusText,
                             { color: question.isCorrect ? '#10B981' : '#EF4444' }
                           ]}>
-                            {question.isCorrect ? 'Correct' : 'Incorrect'}
+                            {reviewMode === 'flashcard' ? (question.isCorrect ? 'Known' : 'Unknown') : (question.isCorrect ? 'Correct' : 'Incorrect')}
                           </Text>
                         </View>
-                        <Text style={styles.subjectText}>{question.subject}</Text>
+                        {question.subject ? <Text style={styles.subjectText}>{question.subject}</Text> : null}
                       </View>
                       <Text style={styles.questionText}>
                         {question.question}
@@ -400,7 +522,7 @@ export default function ReviewScreen() {
                     <View style={styles.questionDetails}>
                       <View style={styles.detailRow}>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.answerLabel}>Your Answer</Text>
+                          <Text style={styles.answerLabel}>{reviewMode === 'flashcard' ? 'Your Response' : 'Your Answer'}</Text>
                           <Text style={[
                             styles.answerText,
                             { color: question.isCorrect ? '#10B981' : '#EF4444' }
@@ -411,7 +533,7 @@ export default function ReviewScreen() {
 
                         {!question.isCorrect && (
                           <View style={{ flex: 1, paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: '#334155' }}>
-                            <Text style={styles.answerLabel}>Correct Answer</Text>
+                            <Text style={styles.answerLabel}>{reviewMode === 'flashcard' ? 'Answer' : 'Correct Answer'}</Text>
                             <Text style={[styles.answerText, { color: '#10B981' }]}>
                               {question.correctAnswer}
                             </Text>
@@ -419,10 +541,12 @@ export default function ReviewScreen() {
                         )}
                       </View>
 
-                      <View style={styles.explanationSection}>
-                        <Text style={styles.explanationLabel}>Explanation</Text>
-                        <Text style={styles.explanationText}>{question.explanation || "No explanation provided."}</Text>
-                      </View>
+                      {question.explanation ? (
+                        <View style={styles.explanationSection}>
+                          <Text style={styles.explanationLabel}>Explanation</Text>
+                          <Text style={styles.explanationText}>{question.explanation}</Text>
+                        </View>
+                      ) : null}
                     </View>
                   )}
                 </View>
@@ -441,7 +565,7 @@ export default function ReviewScreen() {
           )}
         </ScrollView>
       </View>
-    </LinearGradient>
+    </LinearGradient >
   );
 }
 
@@ -703,6 +827,37 @@ const createStyles = (colors: any) => StyleSheet.create({
   emptyStateSubtext: {
     fontSize: 14,
     color: colors.subText,
+  },
+  // Mode Toggle Styles
+  modeToggleContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
+  modeToggleBg: {
+    flexDirection: 'row',
+    backgroundColor: colors.card,
+    borderRadius: 25,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modeToggleBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 22,
+  },
+  modeToggleBtnActive: {
+    backgroundColor: colors.primary,
+  },
+  modeToggleText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.subText,
+  },
+  modeToggleTextActive: {
+    color: '#0F172A',
+    fontWeight: '700',
   },
 });
 

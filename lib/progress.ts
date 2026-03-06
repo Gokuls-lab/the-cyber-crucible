@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase } from '@/lib/supabase';
 
 export async function updateProgress(userId: string, sessionData: {
   questionsAnswered: number;
@@ -16,7 +16,7 @@ export async function updateProgress(userId: string, sessionData: {
     const lastStudied = progress?.last_studied ? new Date(progress.last_studied) : null;
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    
+
     let newStreak = 1;
     if (lastStudied) {
       if (lastStudied.toISOString().split('T')[0] === yesterday.toISOString().split('T')[0]) {

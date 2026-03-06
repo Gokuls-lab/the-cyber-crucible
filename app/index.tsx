@@ -3,9 +3,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Redirect } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import React, { useEffect } from 'react';
-import { ActivityIndicator, Dimensions, Image, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // Responsive utility functions
 const { width, height } = Dimensions.get('window');
@@ -53,10 +53,24 @@ export default function Index() {
           <Text style={[styles.title, { color: colors.text }]}>The Cyber Cruciora</Text>
         </View>
         <View style={styles.statusContainer}>
-          <ActivityIndicator size="large" color={colors.error} />
-          <Text style={{ color: colors.error, fontSize: 16, textAlign: 'center', marginTop: 16, paddingHorizontal: 20 }}>
+          <Text style={{ color: colors.error, fontSize: 16, textAlign: 'center', marginTop: 16, paddingHorizontal: 20, marginBottom: 20 }}>
             {timeoutError || error?.message || 'Unknown error occurred.'}
           </Text>
+          <TouchableOpacity
+            style={{ backgroundColor: colors.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 }}
+            onPress={async () => {
+              try {
+                // Try to forcefully clear the auth state to unblock the user
+                const { supabase } = await import('@/lib/supabase');
+                await supabase.auth.signOut();
+                router.replace('/auth');
+              } catch (e) {
+                console.error('Force signout failed', e);
+              }
+            }}
+          >
+            <Text style={{ color: '#0F172A', fontWeight: 'bold' }}>Reset App & Go to Login</Text>
+          </TouchableOpacity>
         </View>
       </LinearGradient>
     );

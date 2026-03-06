@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase } from '@/lib/supabase';
 
 export interface AdaptiveQuestion {
     id: string;
@@ -187,34 +187,65 @@ export const getUserAdaptiveProgress = async (userId: string, examId: string) =>
 export const resetAdaptiveProgress = async (userId: string, examId?: string) => {
     if (examId) {
         // Exam-specific reset
+        console.log('[Flashcards] Step 1: Starting reset for:', { userId, examId });
 
-        // 1. Reset progress via RPC (sets it to Level 1, 0 Swiped in the JSON)
-        const { error: progressError } = await supabase.rpc('update_adaptive_progress', {
+        // 1. Reset progress via RPC
+        console.log('[Flashcards] Step 2: Calling RPC...');
+        const { error: progressError } = await supabase.rpc('reset_adaptive_progress_v2', {
             p_user_id: userId,
             p_exam_id: examId,
             p_level: 1,
             p_swiped: 0
         });
-        if (progressError) throw progressError;
 
-        // 2. Delete logs for this exam
+        if (progressError) {
+            console.error('[Flashcards] Step 2 FAILED - RPC Error:', progressError);
+            throw progressError;
+        }
+        console.log('[Flashcards] Step 2: RPC successful');
+
+        // 2. Fetch question IDs for this exam
+        console.log('[Flashcards] Step 3: Fetching adaptive_questions...');
         const { data: questions, error: qError } = await supabase
             .from('adaptive_questions')
             .select('id')
             .eq('exam_id', examId);
 
-        if (qError) throw qError;
+        if (qError) {
+            console.error('[Flashcards] Step 3 FAILED - Query Error:', qError);
+            throw qError;
+        }
+        console.log('[Flashcards] Step 3: Found', questions?.length || 0, 'questions');
 
+        // 3. Delete study logs for these questions (in batches to avoid URL length limits)
         if (questions && questions.length > 0) {
             const qIds = questions.map(q => q.id);
-            const { error: logsError } = await supabase
-                .from('user_study_logs')
-                .delete()
-                .eq('user_id', userId)
-                .in('question_id', qIds);
+            const BATCH_SIZE = 50;
+            const totalBatches = Math.ceil(qIds.length / BATCH_SIZE);
 
-            if (logsError) throw logsError;
+            console.log('[Flashcards] Step 4: Deleting user_study_logs in', totalBatches, 'batches...');
+
+            for (let i = 0; i < qIds.length; i += BATCH_SIZE) {
+                const batch = qIds.slice(i, i + BATCH_SIZE);
+                const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+
+                const { error: logsError } = await supabase
+                    .from('user_study_logs')
+                    .delete()
+                    .eq('user_id', userId)
+                    .in('question_id', batch);
+
+                if (logsError) {
+                    console.error(`[Flashcards] Step 4 FAILED - Batch ${batchNum} Error:`, logsError);
+                    throw logsError;
+                }
+            }
+            console.log('[Flashcards] Step 4: All logs deleted successfully');
+        } else {
+            console.log('[Flashcards] Step 4: Skipped (no questions to delete logs for)');
         }
+
+        console.log('[Flashcards] Reset complete!');
     } else {
         // Global Reset: Wipe everything
         // 1. Reset progress (empty JSON)

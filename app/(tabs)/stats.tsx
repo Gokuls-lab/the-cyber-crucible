@@ -16,8 +16,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/contexts/AuthContext';
 import { useExam } from '@/contexts/ExamContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { getOverallProgress, getRankForLevel, isMaxLevel } from '@/lib/adaptiveRanks';
-import { getUserAdaptiveProgress, resetAdaptiveProgress } from '@/lib/flashcards'; // Added imports
+import { getRankForLevel, isMaxLevel } from '@/lib/adaptiveRanks';
+import { getExamQuestionCount, getUserAdaptiveProgress, resetAdaptiveProgress } from '@/lib/flashcards'; // Added imports
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -90,6 +90,10 @@ export default function StatsScreen() {
       // 1. Fetch Adaptive Progress
       const adaptiveProgress = await getUserAdaptiveProgress(user.id, exam.id);
 
+      // 1.5 Fetch total adaptive questions count
+      const totalAdaptiveQuestions = await getExamQuestionCount(exam.id);
+
+
       // 2. Fetch all quiz sessions for the current exam
       const { data: sessions, error: sessionError } = await supabase
         .from('quiz_sessions')
@@ -112,7 +116,7 @@ export default function StatsScreen() {
 
       // If there are no questions for this exam, there's nothing to show.
       if (questionIdsForExam.length === 0) {
-        setStats({ streak: 0, totalQuestions: 0, accuracy: 0, studyTime: '0m', weeklyProgress: Array(7).fill(0), subjectScores: [], adaptive: adaptiveProgress });
+        setStats({ streak: 0, totalQuestions: 0, accuracy: 0, studyTime: '0m', weeklyProgress: Array(7).fill(0), subjectScores: [], adaptive: adaptiveProgress, totalAdaptiveQuestions });
         setLoading(false);
         setRefreshing(false);
         return;
@@ -227,7 +231,8 @@ export default function StatsScreen() {
         studyTime,
         weeklyProgress,
         subjectScores,
-        adaptive: adaptiveProgress // Add adaptive progress to stats
+        adaptive: adaptiveProgress, // Add adaptive progress to stats
+        totalAdaptiveQuestions,
       });
 
     } catch (err) {
@@ -285,11 +290,20 @@ export default function StatsScreen() {
               }
 
               // Delete user_progress
-              await supabase.rpc('update_exam_stage', {
+              console.log('[StatsScreen] Resetting level for:', { uid: user?.id, examId: exam?.id });
+
+              const { error: rpcError } = await supabase.rpc('update_exam_stage', {
                 uid: user?.id,
-                exam_id: exam.id,
+                exam_id: exam?.id,
                 new_stage: 0,
               });
+
+              if (rpcError) {
+                console.error('[StatsScreen] RPC Error:', rpcError);
+                Alert.alert('Error', 'Failed to reset level progress: ' + rpcError.message);
+              } else {
+                console.log('[StatsScreen] Level reset RPC successful');
+              }
 
               // Reset Adaptive Flashcard Progress using library function
               if (user?.id) {
@@ -352,8 +366,9 @@ export default function StatsScreen() {
   const maxWeeklyValue = stats ? Math.max(...stats.weeklyProgress, 1) : 1;
   const adaptiveLevel = stats?.adaptive?.current_level || 1;
   const adaptiveRank = getRankForLevel(adaptiveLevel);
-  const adaptiveProgress = getOverallProgress(adaptiveLevel);
   const adaptiveSwiped = stats?.adaptive?.total_cards_swiped || 0;
+  const totalAdaptiveForCalc = stats?.totalAdaptiveQuestions || 1;
+  const adaptiveProgress = Math.min(100, (adaptiveSwiped / totalAdaptiveForCalc) * 100);
 
   if (examLoading) {
     return (
@@ -492,12 +507,12 @@ export default function StatsScreen() {
                   {/* Stats Row */}
                   <View style={styles.adaptiveStatsRow}>
                     <View style={styles.adaptiveStat}>
-                      <Text style={styles.adaptiveStatEffect}>{adaptiveSwiped}</Text>
+                      <Text style={styles.adaptiveStatEffect}>{adaptiveSwiped} <Text style={{ fontSize: 16, color: colors.subText }}>/ {stats?.totalAdaptiveQuestions || '?'}</Text></Text>
                       <Text style={styles.adaptiveStatLabel}>Cards Reviewed</Text>
                     </View>
                     <View style={styles.adaptiveDivider} />
                     <View style={styles.adaptiveStat}>
-                      <Text style={styles.adaptiveStatEffect}>{adaptiveProgress.toFixed(0)}%</Text>
+                      <Text style={styles.adaptiveStatEffect}>{adaptiveProgress.toFixed(1)}%</Text>
                       <Text style={styles.adaptiveStatLabel}>Rank Progress</Text>
                     </View>
                   </View>
@@ -584,7 +599,7 @@ export default function StatsScreen() {
                       allTopics.sort((a: any, b: any) => a.name.localeCompare(b.name));
                     }
 
-                    const displayedTopics = showAllTopics ? allTopics : allTopics.slice(0, 5);
+                    const displayedTopics = showAllTopics ? allTopics : allTopics.slice(0, 3);
 
                     if (allTopics.length === 0) {
                       return <Text style={{ color: '#94A3B8', textAlign: 'center', padding: 20 }}>No topics available.</Text>;
@@ -612,7 +627,7 @@ export default function StatsScreen() {
                           </View>
                         ))}
 
-                        {allTopics.length > 5 && (
+                        {allTopics.length > 3 && (
                           <TouchableOpacity
                             style={styles.showMoreButton}
                             onPress={() => setShowAllTopics(!showAllTopics)}

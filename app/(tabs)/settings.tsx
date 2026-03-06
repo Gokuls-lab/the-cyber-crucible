@@ -85,15 +85,14 @@ export default function SettingsScreen() {
       Notifications.scheduleNotificationAsync({
         content: {
           title: 'Study Reminder',
-          body: 'Time to practice on Cyber Crucible!',
+          body: 'Time to practice on Cyber Cruciora!',
         },
         trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
           hour: 8,
           minute: 0,
-          repeats: true,
         },
-      });
+      }).catch(e => console.log('Notification scheduling error:', e.message));
     } else {
       Notifications.cancelAllScheduledNotificationsAsync();
     }
@@ -183,11 +182,19 @@ export default function SettingsScreen() {
               // or we need a more granular progress tracking per exam.
               // For now, we'll leave it as is, but it's a point for future improvement.
               // Delete user_progress
-              await supabase.rpc('update_exam_stage', {
+              console.log('[SettingsScreen] Resetting level for:', { uid: user?.id, examId: exam?.id });
+              const { error: rpcError } = await supabase.rpc('update_exam_stage', {
                 uid: user?.id,
-                exam_id: exam.id,
+                exam_id: exam?.id,
                 new_stage: 0,
               });
+
+              if (rpcError) {
+                console.error('[SettingsScreen] RPC Error:', rpcError);
+                throw rpcError;
+              } else {
+                console.log('[SettingsScreen] Level reset RPC successful');
+              }
 
 
               // Reset Adaptive Flashcard Progress

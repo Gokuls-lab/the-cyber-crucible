@@ -1,3 +1,4 @@
+import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Platform } from 'react-native';
@@ -7,7 +8,6 @@ import Purchases, {
     PurchasesOffering,
     PurchasesPackage,
 } from 'react-native-purchases';
-import { useAuth } from './AuthContext';
 
 // Use the provided test API key
 const API_KEYS = {

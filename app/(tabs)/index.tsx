@@ -1,14 +1,18 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Dimensions,
+  Image,
+  Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import Svg, { Circle } from 'react-native-svg';
 
 // Responsive utility functions
@@ -25,11 +29,31 @@ import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useQuizModes } from '@/lib/QuizModes';
 import { supabase } from '@/lib/supabase';
+import { prefetchOfflineBank } from '@/utils/offlineSync';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { ChartBar as BarChart, Calendar, ChevronLeft, ChevronRight, Clock, Crown, CreditCard as Edit, Layers, Target, TrendingUp, X } from 'lucide-react-native';
+import { ChartBar as BarChart, Bell, BookOpen, Calendar, CheckCircle, ChevronLeft, ChevronRight, Clock, Crown, CreditCard as Edit, Flame, Layers, Target, TrendingUp, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const today = new Date();
+
+const timeAgo = (dateStr: string) => {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+  if (seconds < 60) return `Just now`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 4) return `${weeks}w ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+};
 
 const QUIZ_MODES = [
   {
@@ -146,62 +170,141 @@ export default function StudyScreen() {
   console.log(quizModes)
 
   const [studiedDays, setStudiedDays] = useState<number[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
+  const [isNotificationsModalVisible, setIsNotificationsModalVisible] = useState(false);
+  const [expandedNotifications, setExpandedNotifications] = useState<string[]>([]);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
   });
   const [loadingCalendar, setLoadingCalendar] = useState(false);
   const [freeProgress, setFreeProgress] = useState({ total: 0, consumed: 0, loading: true });
+  const [examProgress, setExamProgress] = useState({ total: 0, correct: 0, loading: true });
 
+  // Fetch exam-wide progress (correct / total) — works for both free and pro users
   useEffect(() => {
-    const fetchFreeProgress = async () => {
-      if (!user || isPro || !exam) {
+    const fetchExamProgress = async () => {
+      if (!user || !exam) {
+        setExamProgress(prev => ({ ...prev, loading: false }));
         setFreeProgress(prev => ({ ...prev, loading: false }));
         return;
       }
-      setFreeProgress(prev => ({ ...prev, loading: true }));
+      setExamProgress(prev => ({ ...prev, loading: true }));
+      if (!isPro) setFreeProgress(prev => ({ ...prev, loading: true }));
       try {
-        // 1. Total Free Questions for this exam
-        const { count: total, error: totalError } = await supabase
+        // 1. Total questions for this exam (scoped by user plan)
+        let totalQuery = supabase
           .from('questions')
           .select('*', { count: 'exact', head: true })
-          .eq('exam', exam.id)
-          .eq('is_premium', false);
+          .eq('exam', exam.id);
 
+        if (!isPro) {
+          totalQuery = totalQuery.eq('is_premium', false);
+        }
+
+        const { count: totalCount, error: totalError } = await totalQuery;
         if (totalError) throw totalError;
 
-        // 2. Questions answered correctly by this user for this exam (free only)
-        // Note: Relation syntax "questions!inner" filters the user_answers based on joined questions table
-        const { data: answeredData, error: ansError } = await supabase
+        // 2. Unique questions answered CORRECTLY by this user for this exam
+        let answeredQuery = supabase
           .from('user_answers')
           .select('question_id, questions!inner(id, exam, is_premium)')
           .eq('user_id', user.id)
           .eq('is_correct', true)
-          .eq('questions.exam', exam.id)
-          .eq('questions.is_premium', false);
+          .eq('questions.exam', exam.id);
 
+        if (!isPro) {
+          answeredQuery = answeredQuery.eq('questions.is_premium', false);
+        }
+
+        const { data: answeredData, error: ansError } = await answeredQuery;
         if (ansError) throw ansError;
 
-        const uniqueAnswered = new Set((answeredData || []).map((a: any) => a.question_id)).size;
-        setFreeProgress({ total: total || 0, consumed: uniqueAnswered, loading: false });
+        const uniqueCorrect = new Set((answeredData || []).map((a: any) => a.question_id)).size;
+        const total = totalCount || 0;
+
+        setExamProgress({ total, correct: uniqueCorrect, loading: false });
+
+        // Also update freeProgress for free users (used by the quick stat card)
+        if (!isPro) {
+          setFreeProgress({ total, consumed: uniqueCorrect, loading: false });
+        } else {
+          setFreeProgress(prev => ({ ...prev, loading: false }));
+        }
+
+        // Prefetch offline questions when exam resolves
+        if (exam?.id) {
+          prefetchOfflineBank(exam.id, user.id, isPro);
+        }
+
       } catch (err) {
-        console.error('Error fetching free progress:', err);
+        console.error('Error fetching exam progress:', err);
+        setExamProgress(prev => ({ ...prev, loading: false }));
         setFreeProgress(prev => ({ ...prev, loading: false }));
       }
     };
 
-    fetchFreeProgress();
-  }, [user, exam]);
+    fetchExamProgress();
+  }, [user, exam, isPro]);
+
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('is_active', true)
+          .or(`expires_at.is.null,expires_at.gte.${new Date().toISOString()}`)
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('Error fetching notifications:', error);
+          return;
+        }
+
+        const filtered = (data || []).filter(
+          (n) => n.target_platform === 'all' || n.target_platform === Platform.OS
+        );
+        setNotifications(filtered);
+
+        const readIdsStr = await AsyncStorage.getItem('read_notifications');
+        if (readIdsStr) {
+          setReadNotificationIds(JSON.parse(readIdsStr));
+        }
+      } catch (err) {
+        console.error('Notifications fetch failed:', err);
+      }
+    };
+    fetchNotifications();
+  }, []);
+
+  const unreadCount = notifications.filter((n) => !readNotificationIds.includes(n.id)).length;
+
+  const toggleExpandNotification = async (id: string) => {
+    let newReadIds = [...readNotificationIds];
+    if (!readNotificationIds.includes(id)) {
+      newReadIds.push(id);
+      setReadNotificationIds(newReadIds);
+      await AsyncStorage.setItem('read_notifications', JSON.stringify(newReadIds));
+    }
+
+    if (expandedNotifications.includes(id)) {
+      setExpandedNotifications(expandedNotifications.filter((i) => i !== id));
+    } else {
+      setExpandedNotifications([...expandedNotifications, id]);
+    }
+  };
 
 
   const progressWidth = useSharedValue(0);
 
   useEffect(() => {
-    if (freeProgress.total > 0) {
-      const percentage = Math.min((freeProgress.consumed / freeProgress.total) * 100, 100);
+    if (examProgress.total > 0) {
+      const percentage = Math.min((examProgress.correct / examProgress.total) * 100, 100);
       progressWidth.value = withTiming(percentage, { duration: 1000, easing: Easing.out(Easing.exp) });
     }
-  }, [freeProgress]);
+  }, [examProgress]);
 
   const animatedProgressStyle = useAnimatedStyle(() => {
     return {
@@ -326,135 +429,223 @@ export default function StudyScreen() {
     <LinearGradient colors={[colors.gradientStart, colors.gradientEnd]} style={[styles.container, { paddingTop: insets.top }]}>
       <View style={{ flex: 1, paddingBottom: insets.bottom + 90 }}>
         <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
-          {/* Header */}
-          <View style={{ ...styles.header, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexDirection: 'row' }}>
-            <Text style={styles.greeting}>{getGreeting()}</Text>
-            <TouchableOpacity onPress={() => router.push('/exam-selection')}>
-              <View style={styles.examSelector}>
-                <Text style={{ ...styles.examText, color: '#F59E0B', fontSize: vs(14) }}>{exam ? exam.short_name : ''}</Text>
+          {/* Enhanced Header */}
+          <Animated.View entering={FadeInDown.duration(600).delay(100)} style={styles.header}>
+            <View style={styles.headerTopRow}>
+              <View style={styles.userInfoContainer}>
+                <View style={styles.avatarWrapper}>
+                  {user?.avatar_url ? (
+                    <Image source={{ uri: user.avatar_url }} style={[styles.userAvatar, isPro && styles.userAvatarPro]} />
+                  ) : (
+                    <View style={[styles.userAvatarPlaceholder, { backgroundColor: colors.primary }, isPro && styles.userAvatarPro]}>
+                      <Text style={styles.userAvatarText}>
+                        {user?.full_name ? user.full_name.charAt(0).toUpperCase() : 'U'}
+                      </Text>
+                    </View>
+                  )}
+                  {isPro && (
+                    <View style={styles.proCrownBadge}>
+                      <Crown size={12} color="#FFFFFF" strokeWidth={2.5} />
+                    </View>
+                  )}
+                </View>
+                <View style={styles.userGreetingTextContainer}>
+                  <Text style={[styles.greetingSubtext, { color: colors.subText }]}>{getGreeting()}</Text>
+                  <Text style={[styles.greetingTitle, { color: colors.text }]} numberOfLines={1}>
+                    {user?.full_name ? user.full_name : 'Ready to learn?'}
+                  </Text>
+                </View>
               </View>
-            </TouchableOpacity>
-          </View>
 
-
-
-          {/* Study Calendar */}
-          <View style={styles.calendarContainer}>
-            {/* Month navigation */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 12 }}>
-              <TouchableOpacity
-                onPress={() => setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
-                style={{ backgroundColor: colors.inputBg, borderRadius: 20, padding: 8, borderWidth: 1, borderColor: colors.border, marginRight: 8 }}
-                accessibilityLabel="Previous Month"
-              >
-                <ChevronLeft size={20} color={colors.text} strokeWidth={2.5} />
-              </TouchableOpacity>
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: colors.text, fontSize: 18, fontWeight: 'bold', textAlign: 'center', letterSpacing: 0.5 }}>
-                  {getMonthName(calendarMonth)}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setCalendarMonth(new Date())}
-                  style={{ marginLeft: 12, backgroundColor: colors.primary, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 }}
-                  accessibilityLabel="Jump to Today"
-                >
-                  <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '600' }}>Today</Text>
+              <View style={styles.headerActions}>
+                <TouchableOpacity onPress={() => setIsNotificationsModalVisible(true)} style={styles.bellIconContainer}>
+                  <Bell size={22} color={colors.text} strokeWidth={2} />
+                  {unreadCount > 0 && (
+                    <View style={styles.notificationBadge} />
+                  )}
                 </TouchableOpacity>
               </View>
-              <TouchableOpacity
-                onPress={() => setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
-                style={{ backgroundColor: colors.inputBg, borderRadius: 20, padding: 8, borderWidth: 1, borderColor: colors.border, marginLeft: 8 }}
-                accessibilityLabel="Next Month"
-              >
-                <ChevronRight size={20} color={colors.text} strokeWidth={2.5} />
-              </TouchableOpacity>
             </View>
-            <View style={styles.calendarGrid}>
-              {getDaysInMonth(calendarMonth).map((day) => {
-                const dateObj = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
-                const isToday = (() => {
-                  const now = new Date();
+          </Animated.View>
+
+          {/* Quick Stats Row */}
+          <Animated.View entering={FadeInDown.duration(600).delay(200)} style={styles.quickStatsRow}>
+            <TouchableOpacity style={[styles.quickStatCard]} onPress={() => router.push('/exam-selection')} activeOpacity={0.7}>
+              <View style={styles.quickStatIconRow}>
+                <Target size={20} color={colors.primary} strokeWidth={2} />
+                <ChevronRight size={14} color={colors.subText} style={{ opacity: 0.6 }} />
+              </View>
+              <Text style={[styles.quickStatValue, { color: colors.text }]} numberOfLines={1}>{exam ? exam.short_name : '—'}</Text>
+              <Text style={[styles.quickStatLabel, { color: colors.primary, opacity: 0.8 }]}>Tap to change</Text>
+            </TouchableOpacity>
+            <View style={styles.quickStatCard}>
+              <Flame size={20} color={'#F97316'} strokeWidth={2} />
+              <Text style={[styles.quickStatValue, { color: colors.text }]}>{studiedDays.length}</Text>
+              <Text style={[styles.quickStatLabel, { color: colors.subText }]}>Days Active</Text>
+            </View>
+            {examProgress.total > 0 && (
+              <View style={styles.quickStatCard}>
+                <Layers size={20} color={isPro ? colors.primary : colors.secondary} strokeWidth={2} />
+                <Text style={[styles.quickStatValue, { color: colors.text }]}>{Math.max(0, examProgress.total - examProgress.correct)}</Text>
+                <Text style={[styles.quickStatLabel, { color: colors.subText }]}>Qs Left</Text>
+              </View>
+            )}
+
+          </Animated.View>
+          {/* Study Progress Section (Calendar) */}
+          <Animated.View entering={FadeInDown.duration(600).delay(300)}>
+            <Text style={styles.sectionTitle}>Study Streak</Text>
+            <View style={styles.calendarContainer}>
+              {/* Month navigation */}
+              <View style={styles.calendarHeader}>
+                <TouchableOpacity
+                  onPress={() => setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                  style={styles.calendarMonthBtn}
+                  accessibilityLabel="Previous Month"
+                >
+                  <ChevronLeft size={18} color={colors.subText} strokeWidth={2.5} />
+                </TouchableOpacity>
+                <View style={styles.calendarMonthCenter}>
+                  <Text style={[styles.calendarMonthText, { color: colors.text }]}>
+                    {getMonthName(calendarMonth)}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                  style={styles.calendarMonthBtn}
+                  accessibilityLabel="Next Month"
+                >
+                  <ChevronRight size={18} color={colors.subText} strokeWidth={2.5} />
+                </TouchableOpacity>
+              </View>
+              {/* Weekday labels */}
+              <View style={styles.weekdayRow}>
+                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+                  <View key={i} style={styles.weekdayCell}>
+                    <Text style={[styles.weekdayLabel, { color: colors.subText }]}>{d}</Text>
+                  </View>
+                ))}
+              </View>
+              <View style={styles.calendarGrid}>
+                {/* Empty slots for offset */}
+                {Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay() }).map((_, i) => (
+                  <View key={`empty-${i}`} style={styles.calendarDayEmpty} />
+                ))}
+                {getDaysInMonth(calendarMonth).map((day) => {
+                  const dateObj = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
+                  const isToday = (() => {
+                    const now = new Date();
+                    return (
+                      dateObj.getFullYear() === now.getFullYear() &&
+                      dateObj.getMonth() === now.getMonth() &&
+                      dateObj.getDate() === now.getDate()
+                    );
+                  })();
+                  const isStudied = studiedDays.includes(day);
                   return (
-                    dateObj.getFullYear() === now.getFullYear() &&
-                    dateObj.getMonth() === now.getMonth() &&
-                    dateObj.getDate() === now.getDate()
-                  );
-                })();
-                const isStudied = studiedDays.includes(day);
-                // console.log('Rendering day:', day, 'isStudied:', isStudied, 'studiedDays:', studiedDays);
-                return (
-                  <View
-                    key={day}
-                    style={[
-                      styles.calendarDay,
-                      isStudied && styles.studiedDay,
-                      isToday && styles.todayDay,
-                    ]}
-                  >
-                    <Text
+                    <View
+                      key={day}
                       style={[
-                        styles.calendarDayText,
-                        isStudied && styles.studiedDayText,
-                        isToday && { color: colors.background, fontWeight: 'bold' },
+                        styles.calendarDay,
+                        isStudied && styles.studiedDay,
+                        isToday && styles.todayDay,
                       ]}
                     >
-                      {day}
+                      <Text
+                        style={[
+                          styles.calendarDayText,
+                          isStudied && styles.studiedDayText,
+                          isToday && styles.todayDayText,
+                        ]}
+                      >
+                        {day}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+              <View style={styles.calendarLegend}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: colors.primary }]} />
+                  <Text style={styles.legendText}>Today</Text>
+                </View>
+                <View style={[styles.legendItem, { marginLeft: 20 }]}>
+                  <View style={[styles.legendDot, { backgroundColor: '#10B981' }]} />
+                  <Text style={styles.legendText}>Studied</Text>
+                </View>
+              </View>
+            </View>
+          </Animated.View>
+
+          {/* Exam Progress Card (Both Free & Pro Users) */}
+          {!examProgress.loading && examProgress.total > 0 && (
+            <Animated.View entering={FadeInDown.duration(600).delay(400)}>
+              <View style={styles.progressContainer}>
+                <View style={styles.progressHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <View style={styles.examProgressIcon}>
+                      <BookOpen size={16} color={colors.primary} strokeWidth={2.5} />
+                    </View>
+                    <Text style={styles.progressTitle}>Exam Progress</Text>
+                  </View>
+                  <Text style={styles.progressCount}>
+                    {examProgress.correct}<Text style={{ color: colors.subText, fontSize: 14, fontWeight: '500' }}> / {examProgress.total}</Text>
+                  </Text>
+                </View>
+                <View style={styles.progressBarBg}>
+                  <Animated.View
+                    style={[
+                      styles.progressBarFill,
+                      animatedProgressStyle,
+                      examProgress.total > 0 && examProgress.correct === examProgress.total && { backgroundColor: '#10B981' }
+                    ]}
+                  />
+                </View>
+                <View style={styles.progressFooterRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <CheckCircle size={14} color={'#10B981'} strokeWidth={2.5} />
+                    <Text style={styles.progressFooter}>
+                      {Math.max(0, examProgress.total - examProgress.correct)} questions remaining
                     </Text>
                   </View>
-                );
-              })}
-            </View>
-            <View style={styles.calendarLegend}>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: '#10B981' }]} />
-                <Text style={styles.legendText}>Studied</Text>
+                  {!isPro && (
+                    <TouchableOpacity onPress={() => router.push('/subscription')} style={styles.upgradeChip}>
+                      <Crown size={12} color={colors.primary} strokeWidth={2.5} />
+                      <Text style={[styles.upgradeChipText, { color: colors.primary }]}>Upgrade</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {examProgress.total > 0 && (
+                  <Text style={styles.progressPercentage}>
+                    {Math.round((examProgress.correct / examProgress.total) * 100)}% Complete
+                  </Text>
+                )}
               </View>
-              <View style={[styles.legendItem, { marginLeft: 16 }]}>
-                <View style={[styles.legendDot, { backgroundColor: colors.text, borderWidth: 1, borderColor: colors.border }]} />
-                <Text style={styles.legendText}>Today</Text>
-              </View>
-            </View>
-
-          </View>
-
-          {/* Free Questions Progress Bar (Free Users Only) */}
-          {!isPro && !freeProgress.loading && freeProgress.total > 0 && (
-            <View style={styles.progressContainer}>
-              <View style={styles.progressHeader}>
-                <Text style={styles.progressTitle}>Free Questions Limit</Text>
-                <Text style={styles.progressCount}>
-                  {freeProgress.consumed} <Text style={{ color: '#94A3B8', fontSize: 14 }}>/ {freeProgress.total}</Text>
-                </Text>
-              </View>
-              <View style={styles.progressBarBg}>
-                <Animated.View
-                  style={[
-                    styles.progressBarFill,
-                    animatedProgressStyle
-                  ]}
-                />
-              </View>
-              <Text style={styles.progressFooter}>
-                {freeProgress.total - freeProgress.consumed} questions remaining
-              </Text>
-            </View>
+            </Animated.View>
           )}
 
-          {/* Premium Subscription Banner */}
-          {!isPro && (
-            <TouchableOpacity onPress={() => router.push('/subscription')} style={styles.premiumBanner}>
-              <LinearGradient
-                colors={['#F59E0B', '#D97706']}
-                style={styles.premiumGradient}
-              >
-                <Crown size={24} color="#0F172A" strokeWidth={2} />
-                <Text style={styles.premiumText}>Subscribe for all 6 quiz modes</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+          {/* Premium Subscription Banner (Free users only, shown when no progress data) */}
+          {!isPro && (examProgress.loading || examProgress.total === 0) && (
+            <Animated.View entering={FadeInDown.duration(600).delay(400)}>
+              <TouchableOpacity onPress={() => router.push('/subscription')} style={[styles.premiumBanner, { backgroundColor: colors.card }]}>
+                <View style={styles.premiumGradient}>
+                  <View style={styles.premiumBannerIconContainer}>
+                    <Crown size={24} color={colors.primary} strokeWidth={2} />
+                  </View>
+                  <View style={styles.premiumBannerTextContainer}>
+                    <Text style={[styles.premiumTextHeader, { color: colors.text }]}>Unlock Premium</Text>
+                    <Text style={[styles.premiumTextSub, { color: colors.subText }]}>Get all 6 advanced quiz modes</Text>
+                  </View>
+                  <View style={[styles.premiumArrowBox, { backgroundColor: colors.inputBg }]}>
+                    <ChevronRight size={20} color={colors.primary} />
+                  </View>
+                </View>
+              </TouchableOpacity>
+            </Animated.View>
           )}
 
           {/* Quiz Modes */}
-          <View style={styles.quizModesContainer}>
+          <Animated.View entering={FadeInDown.duration(600).delay(500)} style={styles.quizModesContainer}>
             <Text style={styles.sectionTitle}>Quiz Modes</Text>
 
             {(isQuizModesLoading) &&
@@ -466,41 +657,108 @@ export default function StudyScreen() {
               )
             }
 
-            {quizModes?.sort((a, b) => a.order_index - b.order_index)?.map((mode: any) => {
+            {quizModes?.sort((a, b) => a.order_index - b.order_index)?.map((mode: any, index: number) => {
               const IconComponent = mode.icon;
 
               if (mode.is_active) {
                 return (
-                  <TouchableOpacity
-                    key={mode.id}
-                    style={[styles.quizModeCard]}
-                    onPress={() => handleQuizMode(mode)}
-                  >
-                    <View style={styles.quizModeContent}>
-                      <View style={[styles.quizModeIcon, { backgroundColor: mode.color }]}>
-                        <IconComponent size={24} color="#FFFFFF" strokeWidth={2} />
-                      </View>
-                      <View style={styles.quizModeText}>
-                        <Text style={styles.quizModeTitle}>{mode.title}</Text>
-                        <Text style={styles.quizModeSubtitle}>
-                          {mode.subtitle}
-                        </Text>
-                      </View>
-                      {mode.isPremium && (
-                        <View style={styles.premiumBadge}>
-                          <Crown size={16} color="#F59E0B" strokeWidth={2} />
-                          <Text style={styles.premiumBadgeText}>Premium</Text>
+                  <Animated.View key={mode.id} entering={FadeInDown.duration(400).delay(550 + (index * 50))}>
+                    <TouchableOpacity
+                      style={[styles.quizModeCard, !isPro && mode.isPremium ? { opacity: 0.85 } : {}]}
+                      onPress={() => handleQuizMode(mode)}
+                    >
+                      <View style={styles.quizModeContent}>
+                        <View style={[styles.quizModeIcon, { backgroundColor: mode.color }]}>
+                          <IconComponent size={24} color="#FFFFFF" strokeWidth={2} />
                         </View>
-                      )}
-                    </View>
-                  </TouchableOpacity>
+                        <View style={styles.quizModeText}>
+                          <Text style={[styles.quizModeTitle, !isPro && mode.isPremium && { color: colors.subText }]}>{mode.title}</Text>
+                          <Text style={styles.quizModeSubtitle}>
+                            {mode.subtitle}
+                          </Text>
+                        </View>
+                        {mode.isPremium && (
+                          <View style={[styles.premiumBadge, isPro && { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
+                            {isPro ? (
+                              <Target size={14} color="#10B981" />
+                            ) : (
+                              <Crown size={14} color="#F59E0B" strokeWidth={2.5} />
+                            )}
+                            <Text style={[styles.premiumBadgeText, isPro && { color: '#10B981' }]}>
+                              {isPro ? 'Unlocked' : 'Premium'}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  </Animated.View>
                 );
               }
             })}
-          </View>
+          </Animated.View>
         </ScrollView>
 
         {/* Daily Question Modal */}
+
+        {/* Notifications Modal */}
+        <Modal
+          visible={isNotificationsModalVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setIsNotificationsModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1 }]}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Notifications</Text>
+                <TouchableOpacity onPress={() => setIsNotificationsModalVisible(false)} style={styles.closeModalButton}>
+                  <X size={24} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.notificationsList}>
+                {notifications.length === 0 ? (
+                  <Text style={[styles.emptyNotificationsText, { color: colors.subText }]}>No notifications right now.</Text>
+                ) : (
+                  notifications.map((notif) => {
+                    const isExpanded = expandedNotifications.includes(notif.id);
+                    const isRead = readNotificationIds.includes(notif.id);
+
+                    return (
+                      <TouchableOpacity
+                        key={notif.id}
+                        style={[
+                          styles.notificationCard,
+                          { backgroundColor: colors.card, borderColor: colors.border },
+                          !isRead && { borderColor: '#F59E0B', borderWidth: 1 } // Primary/highlight color
+                        ]}
+                        onPress={() => toggleExpandNotification(notif.id)}
+                      >
+                        <View style={styles.notificationHeader}>
+                          <Text style={[styles.notificationTitle, { color: colors.text }]} numberOfLines={isExpanded ? undefined : 1}>
+                            {notif.title}
+                          </Text>
+                          {!isRead && <View style={styles.unreadDot} />}
+                        </View>
+
+                        <Text
+                          style={[styles.notificationMessage, { color: colors.subText }]}
+                          numberOfLines={isExpanded ? undefined : 2}
+                        >
+                          {notif.message}
+                        </Text>
+
+                        <Text style={[styles.notificationDate, { color: colors.subText }]}>
+                          {timeAgo(notif.created_at)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
 
       </View>
     </LinearGradient>
@@ -521,52 +779,129 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   header: {
     flexDirection: 'column',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    paddingRight: hs(20),
-    paddingLeft: hs(10),
-    marginTop: 20, // Reduced from 40
-    marginBottom: 30,
-  },
-  greeting: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: colors.text,
-    marginBottom: 15,
-  },
-  examTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.primary,
+    marginTop: 12,
     marginBottom: 8,
   },
-  examSelector: {
-    display: 'flex',
+  headerTopRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.inputBg,
-    padding: hs(14),
-    paddingVertical: vs(13),
-    borderRadius: 12,
-    borderWidth: 1,
+    justifyContent: 'space-between',
+  },
+  userInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  avatarWrapper: {
+    position: 'relative' as const,
+  },
+  userAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
     borderColor: colors.border,
   },
-  examText: {
-    fontSize: 16,
+  userAvatarPro: {
+    borderWidth: 2.5,
+    borderColor: '#F59E0B',
+  },
+  proCrownBadge: {
+    position: 'absolute' as const,
+    bottom: -2,
+    right: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#F59E0B',
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
+    borderWidth: 2,
+    borderColor: colors.card,
+  },
+  userAvatarPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userAvatarText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  userGreetingTextContainer: {
+    marginLeft: 14,
+    flex: 1,
+  },
+  greetingSubtext: {
+    fontSize: 13,
+    fontWeight: '500',
+    marginBottom: 2,
+    opacity: 0.8,
+  },
+  greetingTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  bellIconContainer: {
+    padding: 10,
+    borderRadius: 16,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Quick Stats Row
+  quickStatsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 24,
+  },
+  quickStatCard: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 6,
+    marginTop: 30,
+  },
+  quickStatCardTappable: {
+    borderColor: colors.primary,
+    borderStyle: 'dashed',
+  },
+  quickStatIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  quickStatValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  quickStatLabel: {
+    fontSize: 11,
     fontWeight: '600',
-    color: colors.text,
-    marginBottom: 0,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
   },
-  examSubtext: {
-    fontSize: 14,
-    color: colors.subText,
-  },
+  // Progress
   progressContainer: {
     backgroundColor: colors.card,
-    marginHorizontal: 0,
     marginBottom: 20,
-    padding: 16,
-    borderRadius: 16,
+    padding: 18,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.border,
   },
@@ -574,78 +909,169 @@ const createStyles = (colors: any) => StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   progressTitle: {
     color: colors.text,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  progressCount: {
-    color: colors.primary,
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '700',
   },
+  examProgressIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    justifyContent: 'center',
+    alignItems: 'center' as const,
+  },
+  progressPercentage: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '700' as const,
+    marginTop: 10,
+    textAlign: 'right' as const,
+    opacity: 0.85,
+  },
+  progressCount: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: '800',
+  },
   progressBarBg: {
-    height: 12,
-    backgroundColor: colors.border,
-    borderRadius: 6,
+    height: 8,
+    backgroundColor: colors.inputBg,
+    borderRadius: 4,
     overflow: 'hidden',
   },
   progressBarFill: {
     height: '100%',
     backgroundColor: colors.primary,
-    borderRadius: 6,
+    borderRadius: 4,
+  },
+  progressFooterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
   },
   progressFooter: {
     color: colors.subText,
-    fontSize: 12,
-    marginTop: 8,
-    textAlign: 'right',
+    fontSize: 13,
+    fontWeight: '500',
   },
-  calendarContainer: {
-    marginBottom: 30,
-    justifyContent: 'center',
+  upgradeChip: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  upgradeChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  // Calendar
+  calendarContainer: {
+    backgroundColor: colors.card,
+    marginBottom: 20,
+    padding: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
     width: '100%',
-    // paddingHorizontal: vs(10),
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  calendarMonthBtn: {
+    backgroundColor: colors.inputBg,
+    borderRadius: 12,
+    padding: 8,
+  },
+  calendarMonthCenter: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarMonthText: {
+    fontSize: 17,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  weekdayRow: {
+    flexDirection: 'row',
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+  weekdayCell: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  weekdayLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    opacity: 0.45,
   },
   calendarGrid: {
-    marginTop: vs(20),
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: vs(8),
-    marginLeft: hs(10),
-    marginBottom: vs(16),
+    gap: 6,
+    paddingHorizontal: 2,
   },
   calendarDay: {
-    width: vs(30),
-    height: vs(30),
-    borderRadius: 8,
-    backgroundColor: colors.border, // or inputBg
+    width: hs(38),
+    height: hs(38),
+    borderRadius: 10,
+    backgroundColor: colors.inputBg,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  calendarDayEmpty: {
+    width: hs(38),
+    height: hs(38),
+    borderRadius: 10,
+  },
   studiedDay: {
-    backgroundColor: colors.success,
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(16, 185, 129, 0.35)',
   },
   todayDay: {
-    backgroundColor: colors.text, // Inverted high contrast
+    backgroundColor: colors.primary,
+    borderWidth: 0,
   },
   calendarDayText: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.subText,
+    color: colors.text,
+    opacity: 0.55,
   },
   studiedDayText: {
-    color: '#FFFFFF', // success is usually dark enough or light enough? Success #10B981 is mid. White text is fine.
+    color: '#10B981',
+    fontWeight: '800',
+    opacity: 1,
+  },
+  todayDayText: {
+    color: '#ffffff',
+    fontWeight: '800',
+    opacity: 1,
   },
   calendarLegend: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingHorizontal: vs(10),
-    marginTop: hs(10),
+    justifyContent: 'center',
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: 20,
     width: '100%'
   },
   legendItem: {
@@ -662,28 +1088,82 @@ const createStyles = (colors: any) => StyleSheet.create({
     fontSize: 12,
     color: colors.subText,
   },
-  premiumBanner: {
+  // Exam selector (still used in JSX)
+  examSelectorWrapper: {
     marginBottom: 24,
+  },
+  examContextText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.subText,
+    marginBottom: 8,
+    marginLeft: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  examSelectorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.card,
+    padding: 16,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  examSelectorInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  examText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  // Premium banner
+  premiumBanner: {
+    marginBottom: 20,
+    borderRadius: 20,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   premiumGradient: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     padding: 16,
-    gap: 12,
   },
-  premiumText: {
+  premiumBannerIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  premiumBannerTextContainer: {
+    flex: 1,
+  },
+  premiumTextHeader: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#0F172A',
+    fontWeight: '800',
+    marginBottom: 2,
+    letterSpacing: -0.3,
+  },
+  premiumTextSub: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  premiumArrowBox: {
+    borderRadius: 12,
+    padding: 6,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     color: colors.text,
-    marginBottom: 16,
+    marginBottom: 14,
+    letterSpacing: -0.3,
   },
   quizModesContainer: {
     marginBottom: 20,
@@ -737,6 +1217,85 @@ const createStyles = (colors: any) => StyleSheet.create({
     color: '#F59E0B',
   },
 
+  notificationBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 8,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#EF4444',
+    borderWidth: 2,
+    borderColor: colors.background,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    height: '75%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  closeModalButton: {
+    padding: 4,
+    borderRadius: 20,
+    backgroundColor: 'rgba(128,128,128,0.1)',
+  },
+  notificationsList: {
+    paddingBottom: 20,
+  },
+  emptyNotificationsText: {
+    textAlign: 'center',
+    marginTop: 40,
+    fontSize: 16,
+  },
+  notificationCard: {
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+  },
+  notificationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  notificationTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    marginRight: 8,
+  },
+  unreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+    marginTop: 6,
+  },
+  notificationMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  notificationDate: {
+    fontSize: 12,
+  },
 });
 function SpinnerAnimation({ color = '#F59E0B' }: { color?: string }) {
   const rotation = useSharedValue(0);

@@ -21,6 +21,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/blur": "^4.4.1",
     "@react-native-community/cli-server-api": "^18.0.0",
+    "@react-native-community/netinfo": "11.4.1",
     "@react-native-picker/picker": "2.11.1",
     "@react-navigation/bottom-tabs": "^7.2.0",
     "@react-navigation/elements": "^2.3.8",
@@ -41,6 +42,7 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.11",
     "expo-navigation-bar": "~5.0.10",
+    "expo-network": "~8.0.8",
     "expo-notifications": "~0.32.16",
     "expo-router": "~6.0.23",
     "expo-splash-screen": "~31.0.13",
@@ -82,7 +84,8 @@
     "eslint-config-expo": "~10.0.0",
     "react-native-svg-transformer": "^1.5.1",
     "supabase": "^2.67.3",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "@react-native-community/cli": "latest"
   },
   "expo": {
     "doctor": {

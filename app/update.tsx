@@ -80,7 +80,7 @@ export default function UpdateScreen() {
               <Text style={styles.description}>
                 {latest.force_update
                   ? "This is a critical update containing important security fixes and performance improvements. You must update to continue using the app."
-                  : "A new version of Cyber Crucible is available! Update now to access new features and improvements."}
+                  : "A new version of The Cyber Cruciora is available! Update now to access new features and improvements."}
               </Text>
 
               <View style={styles.notesContainer}>
@@ -106,7 +106,13 @@ export default function UpdateScreen() {
                 {!latest.force_update && (
                   <TouchableOpacity
                     style={styles.secondaryButton}
-                    onPress={() => router.replace('/(tabs)')}
+                    onPress={() => {
+                      if (router.canGoBack()) {
+                        router.back();
+                      } else {
+                        router.replace('/(tabs)');
+                      }
+                    }}
                   >
                     <Text style={styles.secondaryButtonText}>Not Now</Text>
                   </TouchableOpacity>
@@ -118,7 +124,13 @@ export default function UpdateScreen() {
               <Text style={styles.noUpdateText}>Your app is up to date!</Text>
               <TouchableOpacity
                 style={styles.secondaryButton}
-                onPress={() => router.replace('/(tabs)')}
+                onPress={() => {
+                  if (router.canGoBack()) {
+                    router.back();
+                  } else {
+                    router.replace('/(tabs)');
+                  }
+                }}
               >
                 <Text style={styles.secondaryButtonText}>Continue to App</Text>
               </TouchableOpacity>
