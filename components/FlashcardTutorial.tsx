@@ -174,7 +174,7 @@ export default function FlashcardTutorial({ onDismiss }: FlashcardTutorialProps)
                     <View style={[styles.checkbox, dontShowAgain && styles.checkboxChecked]}>
                         {dontShowAgain && <Check size={14} color="#FFF" strokeWidth={3} />}
                     </View>
-                    <Text style={styles.checkboxLabel}>Don't show this again</Text>
+                    <Text style={styles.checkboxLabel}>Don&apos;t show this again</Text>
                 </TouchableOpacity>
 
                 {/* Got It Button */}

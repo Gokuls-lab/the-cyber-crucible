@@ -84,7 +84,7 @@ export default function UpdateScreen() {
               </Text>
 
               <View style={styles.notesContainer}>
-                <Text style={styles.notesHeader}>What's New:</Text>
+                <Text style={styles.notesHeader}>What&apos;s New:</Text>
                 <ScrollView style={styles.notesScroll} showsVerticalScrollIndicator={true}>
                   <Text style={styles.notesText}>
                     {latest.release_notes || '• General bug fixes and performance improvements.'}

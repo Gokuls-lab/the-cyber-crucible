@@ -149,7 +149,7 @@ export default function AdaptiveLearningScreen() {
                                 </View>
                                 <Text style={[styles.emptyText, { color: colors.text }]}>All Caught Up!</Text>
                                 <Text style={[styles.emptySubText, { color: colors.subText }]}>
-                                    You've mastered all available cards for your current level. Great job!
+                                    You&apos;ve mastered all available cards for your current level. Great job!
                                 </Text>
 
                                 <TouchableOpacity onPress={handleBack} style={[styles.button, { backgroundColor: colors.primary, width: '100%', alignItems: 'center' }]}>

@@ -20,7 +20,7 @@ export default function HelpScreen() {
               </View>
               <View style={styles.helpText}>
                 <Text style={styles.helpQuestion}>How do I reset my password?</Text>
-                <Text style={styles.helpAnswer}>Go to the login screen and tap on "Forgot Password" to receive a reset link via email.</Text>
+                <Text style={styles.helpAnswer}>Go to the login screen and tap on &quot;Forgot Password&quot; to receive a reset link via email.</Text>
               </View>
             </View>
             <View style={styles.helpCard}>
@@ -38,7 +38,7 @@ export default function HelpScreen() {
               </View>
               <View style={styles.helpText}>
                 <Text style={styles.helpQuestion}>How do I upgrade to Premium?</Text>
-                <Text style={styles.helpAnswer}>Go to Settings and tap on "Upgrade to Premium" to unlock all features.</Text>
+                <Text style={styles.helpAnswer}>Go to Settings and tap on &quot;Upgrade to Premium&quot; to unlock all features.</Text>
               </View>
             </View>
             {/* Add more FAQ items as needed */}

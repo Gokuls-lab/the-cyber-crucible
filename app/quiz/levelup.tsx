@@ -516,7 +516,7 @@ export default function LevelUpQuizScreen() {
           </View>
           <View style={{ ...styles.centered, flex: 0.9 }}>
             <Text style={styles.noQuestionsText}>Congratulations 🎉</Text>
-            <Text style={styles.noQuestionsSubText}>You've completed all levels!</Text>
+            <Text style={styles.noQuestionsSubText}>You&apos;ve completed all levels!</Text>
             <View style={{ justifyContent: 'space-between', flexDirection: 'row', gap: hs(30) }}>
               <Text style={{ color: colors.primary, fontSize: 16, marginTop: 16, fontWeight: 'bold' }} onPress={() => router.back()}>Back</Text>
               <Text style={{ color: colors.primary, fontSize: 16, marginTop: 16, fontWeight: 'bold' }} onPress={() => resetLevels()}>Reset levels</Text>
@@ -537,7 +537,7 @@ export default function LevelUpQuizScreen() {
           </View>
           <View style={styles.centered}>
             <Text style={[styles.noQuestionsText, { fontSize: ms(22) }]}>Congratulations!</Text>
-            <Text style={styles.noQuestionsSubText}>You've completed all levels!</Text>
+            <Text style={styles.noQuestionsSubText}>You&apos;ve completed all levels!</Text>
           </View>
         </View>
       </LinearGradient>
@@ -988,11 +988,11 @@ function StageResult({
 
             {passed ? (
               <Text style={styles.resultSubtitle}>
-                Congratulations! You've mastered the <Text style={{ fontWeight: 'bold' }}>{currentStage}</Text> stage.
+                Congratulations! You&apos;ve mastered the <Text style={{ fontWeight: 'bold' }}>{currentStage}</Text> stage.
               </Text>
             ) : (
               <Text style={styles.resultSubtitle}>
-                Don't worry, you can try again. You need <Text style={{ fontWeight: 'bold' }}>70%</Text> overall accuracy to pass.
+                Don&apos;t worry, you can try again. You need <Text style={{ fontWeight: 'bold' }}>70%</Text> overall accuracy to pass.
               </Text>
             )}
 
