@@ -44,6 +44,12 @@ jobs:
           node-version: "20"
           cache: "pnpm"
 
+      - name: Enable and prepare pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+          pnpm -v
+
       - name: 📦 Get pnpm cache directory path
         id: pnpm-cache-dir-path
         run: echo "dir=$(pnpm store path)" >> $GITHUB_OUTPUT
@@ -81,6 +87,12 @@ jobs:
         with:
           node-version: "20"
           cache: "pnpm"
+
+      - name: Enable and prepare pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+          pnpm -v
 
       - name: 📦 Get pnpm cache directory path
         id: pnpm-cache-dir-path
