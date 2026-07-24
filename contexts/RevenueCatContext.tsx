@@ -11,8 +11,8 @@ import Purchases, {
 
 // Use the provided test API key
 const API_KEYS = {
-    android: 'goog_rQzMXrctdTWRTmrPAeDdTPULvOM',
-    ios: 'goog_rQzMXrctdTWRTmrPAeDdTPULvOM', // Using the same key for now as requested
+    android: 'goog_rQzMXrctdTWRTmrPAeDdTPULvOM', //goog_rQzMXrctdTWRTmrPAeDdTPULvOM
+    ios: 'appl_iEKbDWxFFLHSnVlplnJiGmyDSYd', // Using the same key for now as requested
 };
 
 // test_hOiHkWLVlcqaZIrnuvDecYCfFUJ
