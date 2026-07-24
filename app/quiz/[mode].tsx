@@ -612,9 +612,10 @@ export default function QuizScreen() {
       let filteredData = (data as any[]) || [];
       // Filtering is now handled by the RPC, so no need for client-side filtering.
 
-      const formattedQuestions = filteredData.map(q => ({
+      const formattedQuestions: Question[] = filteredData.map(q => ({
         id: q.id,
         question_text: q.question_text,
+        question_type: q.question_type || 'mcq',
         explanation: q.explanation,
         difficulty: q.difficulty,
         domain: q.domain,

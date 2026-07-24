@@ -45,7 +45,7 @@ export async function prefetchOfflineBank(examId: string, userId: string | undef
             return;
         }
 
-        if (data && data.length > 0) {
+        if (data && (data as any[]).length > 0) {
             const formatted = (data as any[]).map(q => ({
                 id: q.id,
                 question_text: q.question_text,

@@ -52,7 +52,7 @@ jobs:
         run: echo "dir=$(pnpm store path)" >> $GITHUB_OUTPUT
 
       - name: 📦 Setup pnpm cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-cache-dir-path.outputs.dir }}
           key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -93,7 +93,7 @@ jobs:
         run: echo "dir=$(pnpm store path)" >> $GITHUB_OUTPUT
 
       - name: 📦 Setup pnpm cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-cache-dir-path.outputs.dir }}
           key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
