@@ -34,7 +34,6 @@
       },
       "package": "com.cyber.cruciora",
       "versionCode": 20,
-      "targetSdkVersion": 36,
       "permissions": [
         "com.android.vending.BILLING"
       ]
