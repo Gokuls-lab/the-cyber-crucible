@@ -14,6 +14,7 @@ on:
       buildType:
         type: choice
         description: "Build type to run"
+        default: "all"
         options:
           - prod-apk
           - prod-aab
@@ -21,7 +22,6 @@ on:
 
 env:
   EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-  NODE_OPTIONS: --openssl-legacy-provider
 
 jobs:
   check-skip:
@@ -47,18 +47,6 @@ jobs:
           node-version: "22"
           cache: "pnpm"
 
-      - name: 📦 Get pnpm cache directory path
-        id: pnpm-cache-dir-path
-        run: echo "dir=$(pnpm store path)" >> $GITHUB_OUTPUT
-
-      - name: 📦 Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-
       - name: 📦 Install dependencies
         run: |
           pnpm config set ignore-scripts false
@@ -79,6 +67,12 @@ jobs:
       - name: 🏗 Checkout repository
         uses: actions/checkout@v4
 
+      - name: ☕ Setup Java JDK 17 (Required for Android builds)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
       - name: 🏗 Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -88,62 +82,36 @@ jobs:
           node-version: "22"
           cache: "pnpm"
 
-      - name: 📦 Get pnpm cache directory path
-        id: pnpm-cache-dir-path
-        run: echo "dir=$(pnpm store path)" >> $GITHUB_OUTPUT
-
-      - name: 📦 Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-
-      - name: 📦 Install dependencies
+      - name: 📦 Install dependencies & EAS CLI
         run: |
           pnpm config set ignore-scripts false
           pnpm install --frozen-lockfile
           npm install -g eas-cli@latest
 
       - name: 🔄 Verify EAS CLI installation
-        run: |
-          echo "EAS CLI version:"
-          eas --version
+        run: eas --version
 
       - name: 📋 Fix package.json main entry
         run: |
-          # Check if jq is installed, if not install it
           if ! command -v jq &> /dev/null; then
-            echo "Installing jq..."
             sudo apt-get update && sudo apt-get install -y jq
           fi
 
-          # Fix the main entry in package.json
           if [ -f ./package.json ]; then
-            # Create a backup
             cp package.json package.json.bak
-            # Update the package.json
             jq '.main = "node_modules/expo/AppEntry.js"' package.json > package.json.tmp && mv package.json.tmp package.json
             echo "Updated package.json main entry"
-            cat package.json | grep "main"
-          else
-            echo "package.json not found"
-            exit 1
           fi
 
       - name: 📋 Update metro.config.js for SVG support
         run: |
           if [ -f ./metro.config.js ]; then
-            echo "Creating backup of metro.config.js"
             cp ./metro.config.js ./metro.config.js.backup
-            echo "Updating metro.config.js to CommonJS format"
             cat > ./metro.config.js << 'EOFMARKER'
           /* eslint-disable @typescript-eslint/no-var-requires */
           const { getDefaultConfig } = require('expo/metro-config');
 
           const config = getDefaultConfig(__dirname);
-
           const { transformer, resolver } = config;
 
           config.transformer = {
@@ -159,26 +127,25 @@ jobs:
 
           module.exports = config;
           EOFMARKER
-            echo "metro.config.js updated to CommonJS format"
-          else
-            echo "metro.config.js not found"
           fi
 
       - name: 📱 Build Production APK
-        if: github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'prod-apk' || github.event_name == 'push'
+        if: github.event_name == 'push' || github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'prod-apk'
         run: |
-          export NODE_OPTIONS="--openssl-legacy-provider --max_old_space_size=4096"
+          export NODE_OPTIONS="--max_old_space_size=4096"
           eas build --platform android --profile production-apk --local --non-interactive --output=./app-prod.apk
         env:
           NODE_ENV: production
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: 📱 Build Production AAB
-        if: github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'prod-aab' || github.event_name == 'push'
+        if: github.event_name == 'push' || github.event.inputs.buildType == 'all' || github.event.inputs.buildType == 'prod-aab'
         run: |
-          export NODE_OPTIONS="--openssl-legacy-provider --max_old_space_size=4096"
+          export NODE_OPTIONS="--max_old_space_size=4096"
           eas build --platform android --profile production --local --non-interactive --output=./app-prod.aab
         env:
           NODE_ENV: production
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: 📦 Upload build artifacts to GitHub
         uses: actions/upload-artifact@v4
@@ -187,5 +154,6 @@ jobs:
           path: |
             ./app-prod.apk
             ./app-prod.aab
+          if-no-files-found: warn
           retention-days: 7
           
