@@ -105,6 +105,9 @@
         ],
         "listUnknownPackages": false
       }
+    },
+    "install": {
+      "exclude": ["supabase"]
     }
   },
   "private": true
